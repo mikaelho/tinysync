@@ -1,15 +1,17 @@
-# Use Cases
+# tinysync
+
+## Use Cases
 
 Simple syncing of Python data structures to file, to UI, or to another device.
 
-* To file: 
-* To UI: 
-* To another device: 
+* To file: Configuration files, keyed storage
+* To UI: Reacting to changes in data model
+* To another device: Differential data synchronization
 
 * Effortless access and updates to structured data, like a configuration file
 * Tracking and reacting to changes to large data structures
 
-# Features
+## Features
 
 * Understands and wraps lists (MutableSequence), dicts (MutableMapping) and sets (MutableSet).
 * Detects and reports changes to any part of the structure.
@@ -21,7 +23,7 @@ Simple syncing of Python data structures to file, to UI, or to another device.
   * From ProxyTypes: `type`, `__subject__`
   * Context manager: `__enter__`, `__exit__`
   
-# Examples
+## Examples
     
     >>> from tracker import *
     >>> lst = [1, 2]
