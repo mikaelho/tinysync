@@ -9,8 +9,8 @@
 
 """Dictdiffer is a helper module to diff and patch dictionaries."""
 
-import copy
 import sys
+from copy import deepcopy
 
 import pkg_resources
 
@@ -44,47 +44,60 @@ def diff(first, second, node=None, ignore=None, path_limit=None, expand=False,
          tolerance=EPSILON):
     """Compare two dictionary/list/set objects, and returns a diff result.
 
-    Return iterator with differences between two dictionaries.
+    Return an iterator with differences between two objects. The diff items
+    represent addition/deletion/change and the item value is a *deep copy*
+    from the corresponding source or destination objects.
 
-        >>> from dictdiffer import diff
-        >>> result = diff({'a':'b'}, {'a':'c'})
-        >>> list(result)
-        [('change', 'a', ('b', 'c'))]
+    >>> from dictdiffer import diff
+    >>> result = diff({'a': 'b'}, {'a': 'c'})
+    >>> list(result)
+    [('change', 'a', ('b', 'c'))]
 
-    PathLimit:
+    The keys can be skipped from difference calculation when they are included
+    in ``ignore`` argument of type :class:`collections.Container`.
 
-        >>> list(diff({}, {'a': {'b': 'c'}}))
-        [('add', '', [('a', {'b': 'c'})])]
+    >>> list(diff({'a': 1, 'b': 2}, {'a': 3, 'b': 4}, ignore=set(['a'])))
+    [('change', 'b', (2, 4))]
+    >>> class IgnoreCase(set):
+    ...     def __contains__(self, key):
+    ...         return set.__contains__(self, str(key).lower())
+    >>> list(diff({'a': 1, 'b': 2}, {'A': 3, 'b': 4}, ignore=IgnoreCase('a')))
+    [('change', 'b', (2, 4))]
 
-        >>> from dictdiffer.utils import PathLimit
-        >>> list(diff({}, {'a': {'b': 'c'}}, path_limit=PathLimit()))
-        [('add', '', [('a', {})]), ('add', 'a', [('b', 'c')])]
+    The difference calculation can be limitted to certain path:
 
-        >>> from dictdiffer.utils import PathLimit
-        >>> list(diff({}, {'a': {'b': 'c'}}, path_limit=PathLimit([('a',)])))
-        [('add', '', [('a', {'b': 'c'})])]
+    >>> list(diff({}, {'a': {'b': 'c'}}))
+    [('add', '', [('a', {'b': 'c'})])]
 
-        >>> from dictdiffer.utils import PathLimit
-        >>> list(diff({}, {'a': {'b': 'c'}},
-        ...           path_limit=PathLimit([('a', 'b')])))
-        [('add', '', [('a', {})]), ('add', 'a', [('b', 'c')])]
+    >>> from dictdiffer.utils import PathLimit
+    >>> list(diff({}, {'a': {'b': 'c'}}, path_limit=PathLimit()))
+    [('add', '', [('a', {})]), ('add', 'a', [('b', 'c')])]
 
-    Expand:
+    >>> from dictdiffer.utils import PathLimit
+    >>> list(diff({}, {'a': {'b': 'c'}}, path_limit=PathLimit([('a',)])))
+    [('add', '', [('a', {'b': 'c'})])]
 
-        ... list(diff({}, {'foo': 'bar', 'apple': 'mango'}))
-        [('add', '', [('foo', 'bar'), ('apple', 'mango')])]
+    >>> from dictdiffer.utils import PathLimit
+    >>> list(diff({}, {'a': {'b': 'c'}},
+    ...           path_limit=PathLimit([('a', 'b')])))
+    [('add', '', [('a', {})]), ('add', 'a', [('b', 'c')])]
 
-        ... list(diff({}, {'foo': 'bar', 'apple': 'mango'}, expand=True))
-        [('add', '', [('foo', 'bar')]), ('add', '', [('apple', 'mango')])]
+    The patch can be expanded to small units e.g. when adding multiple values:
 
-    :param first: original dictionary, list or set
-    :param second: new dictionary, list or set
-    :param node: key for comparison that can be used in :func:`dot_lookup`
-    :param ignore: list of keys that should not be checked
+    >>> list(diff({'fruits': []}, {'fruits': ['apple', 'mango']}))
+    [('add', 'fruits', [(0, 'apple'), (1, 'mango')])]
+
+    >>> list(diff({'fruits': []}, {'fruits': ['apple', 'mango']}, expand=True))
+    [('add', 'fruits', [(0, 'apple')]), ('add', 'fruits', [(1, 'mango')])]
+
+    :param first: The original dictionary, ``list`` or ``set``.
+    :param second: New dictionary, ``list`` or ``set``.
+    :param node: Key for comparison that can be used in :func:`dot_lookup`.
+    :param ignore: List of keys that should not be checked.
     :param path_limit: List of path limit tuples or dictdiffer.utils.Pathlimit
-                       object to limit the diff recursion depth
-    :param expand: Expands the patches
-    :param tolerance: threshold to consider 2 values identical
+                       object to limit the diff recursion depth.
+    :param expand: Expand the patches.
+    :param tolerance: Threshold to consider when comparing two float numbers.
 
     .. versionchanged:: 0.3
        Added *ignore* parameter.
@@ -96,6 +109,9 @@ def diff(first, second, node=None, ignore=None, path_limit=None, expand=False,
        Added *path_limit* parameter.
        Added *expand* paramter.
        Added *tolerance* parameter.
+
+    .. versionchanged:: 0.7
+       Diff items are deep copies from its corresponding objects.
     """
     if path_limit is not None and not isinstance(path_limit, PathLimit):
         path_limit = PathLimit(path_limit)
@@ -137,8 +153,7 @@ def diff(first, second, node=None, ignore=None, path_limit=None, expand=False,
         differ = True
 
     elif isinstance(first, SET_TYPES) and isinstance(second, SET_TYPES):
-
-        intersection = {}
+        # Deep copy is not necessary for hashable items.
         addition = second - first
         if len(addition):
             yield ADD, dotted_node, [(0, addition)]
@@ -147,7 +162,10 @@ def diff(first, second, node=None, ignore=None, path_limit=None, expand=False,
             yield REMOVE, dotted_node, [(0, deletion)]
 
     if differ:
-        # Compare if object is a dictionary.
+        # Compare if object is a dictionary or list.
+        #
+        # NOTE variables: intersection, addition, deletion contain only
+        # hashable types, hence they do not need to be deepcopied.
         #
         # Call again the parent function as recursive if dictionary have child
         # objects.  Yields `add` and `remove` flags.
@@ -155,7 +173,9 @@ def diff(first, second, node=None, ignore=None, path_limit=None, expand=False,
             # if type is not changed, callees again diff function to compare.
             # otherwise, the change will be handled as `change` flag.
             if path_limit and path_limit.path_is_limit(node+[key]):
-                yield CHANGE, node+[key], (first[key], second[key])
+                yield CHANGE, node+[key], (
+                    deepcopy(first[key]), deepcopy(second[key])
+                )
             else:
                 recurred = diff(first[key],
                                 second[key],
@@ -175,9 +195,9 @@ def diff(first, second, node=None, ignore=None, path_limit=None, expand=False,
                 for key in addition:
                     if not isinstance(second[key],
                                       SET_TYPES + LIST_TYPES + DICT_TYPES):
-                        collect.append((key, second[key]))
+                        collect.append((key, deepcopy(second[key])))
                     elif path_limit.path_is_limit(node+[key]):
-                        collect.append((key, second[key]))
+                        collect.append((key, deepcopy(second[key])))
                     else:
                         collect.append((key, second[key].__class__()))
                         recurred = diff(second[key].__class__(),
@@ -202,33 +222,38 @@ def diff(first, second, node=None, ignore=None, path_limit=None, expand=False,
             else:
                 if expand:
                     for key in addition:
-                        yield ADD, dotted_node, [(key, second[key])]
+                        yield ADD, dotted_node, [(key, deepcopy(second[key]))]
                 else:
                     yield ADD, dotted_node, [
                         # for additions, return a list that consist with
                         # two-pair tuples.
-                        (key, second[key]) for key in addition]
+                        (key, deepcopy(second[key])) for key in addition]
 
         if deletion:
             if expand:
                 for key in deletion:
-                    yield REMOVE, dotted_node, [(key, first[key])]
+                    yield REMOVE, dotted_node, [(key, deepcopy(first[key]))]
             else:
                 yield REMOVE, dotted_node, [
                     # for deletions, return the list of removed keys
                     # and values.
-                    (key, first[key]) for key in deletion]
+                    (key, deepcopy(first[key])) for key in deletion]
 
     else:
         # Compare string and numerical types and yield `change` flag.
         if are_different(first, second, tolerance):
-            yield CHANGE, dotted_node, (first, second)
+            yield CHANGE, dotted_node, (deepcopy(first), deepcopy(second))
 
 
-def patch(diff_result, destination, copy_original = True):
-    """Patch the diff result to the old dictionary."""
-    if copy_original:
-      destination = copy.deepcopy(destination)
+def patch(diff_result, destination, in_place=False):
+    """Patch the diff result to the destination dictionary.
+    
+    :param diff_result: Changes returned by ``diff``.
+    :param destination: Structure to apply the changes to.
+    :param in_place: By default, destination dictionary is deep copied before applying the patch, and the copy is returned. Setting ``in_place=True`` means that patch will apply the changes directly to and return the destination structure.
+    """
+    if not in_place:
+      destination = deepcopy(destination)
 
     def add(node, changes):
         for key, value in changes:
@@ -282,9 +307,9 @@ def swap(diff_result):
     In addition, swap the changed values for `change` flag.
 
         >>> from dictdiffer import swap
-        >>> swapped = swap([('add', 'a.b.c', ('a', 'b'))])
+        >>> swapped = swap([('add', 'a.b.c', [('a', 'b'), ('c', 'd')])])
         >>> next(swapped)
-        ('remove', 'a.b.c', ('a', 'b'))
+        ('remove', 'a.b.c', [('c', 'd'), ('a', 'b')])
 
         >>> swapped = swap([('change', 'a.b.c', ('a', 'b'))])
         >>> next(swapped)
@@ -311,7 +336,7 @@ def swap(diff_result):
         yield swappers[action](node, change)
 
 
-def revert(diff_result, destination, copy_original = True):
+def revert(diff_result, destination, in_place=False):
     """Call swap function to revert patched dictionary object.
 
     Usage example:
@@ -321,6 +346,9 @@ def revert(diff_result, destination, copy_original = True):
         >>> second = {'a': 'c'}
         >>> revert(diff(first, second), second)
         {'a': 'b'}
-
+        
+    :param diff_result: Changes returned by ``diff``.
+    :param destination: Structure to apply the changes to.
+    :param in_place: By default, destination dictionary is deep copied before being reverted, and the copy is returned. Setting ``in_place=True`` means that revert will apply the changes directly to and return the destination structure.
     """
-    return patch(swap(diff_result), destination, copy_original)
+    return patch(swap(diff_result), destination, in_place)

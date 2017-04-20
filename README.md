@@ -2,14 +2,39 @@
 
 ## Use Cases
 
-Simple syncing of Python data structures to file, to UI, or to another device.
+Sync Python dicts and other data structures to:
 
-* To file: Configuration files, keyed storage
-* To UI: Reacting to changes in data model
-* To another device: Differential data synchronization
+1. File: Configuration files, keyed storage
+1. UI: Reacting to changes in data model
+1. Another device: Differential data synchronization
 
-* Effortless access and updates to structured data, like a configuration file
-* Tracking and reacting to changes to large data structures
+### Sync with files
+
+Define structure with default values:
+  
+  >>> default_conf = {
+  ...   'endpoint': {
+  ...     'protocol': 'HTTP',
+  ...     'address':  'docs.python.org' },
+  ...   'retry_intervals': [1, 3, 5]
+  ... }
+  
+Give it to tracker with a name, and it will be persisted, by default as YAML, to a file called '<name>.yaml':
+
+  >>> from tracker import *
+  >>> conf = track(default_conf, 'config')
+  
+Use the resulting object to access and update the data structure. All changes to the structure are automatically saved to the file. For dicts, you have the option of using attribute access (dot) syntax.
+
+  >>> conf['retry_intervals'].append(10)
+  >>> conf.endpoint.protocol
+  'HTTP'
+  
+Default YAML format is nicely accessible if you want to directly edit the file. You can also use JSON, non-safe YAML and pickle - see instructions and fine print in the section Persistence options.
+
+### Sync UI
+
+### Sync between devices
 
 ## Features
 
@@ -25,7 +50,6 @@ Simple syncing of Python data structures to file, to UI, or to another device.
   
 ## Examples
     
-    >>> from tracker import *
     >>> lst = [1, 2]
     >>> tracked_list = track(lst, callback=catcher.cb)
   

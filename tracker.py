@@ -7,17 +7,17 @@ import itertools
 import uuid
 import dictdiffer
 import pprint
-
+import yaml
 
 class TrackerWrapper(ObjectWrapper):
   
   _tracker = None
   
-  def __init__(self, obj, name = 'root', path = None, handler = None, file=None, callback=None):
+  def __init__(self, obj, path, handler):
     ObjectWrapper.__init__(self, obj)
     
-    handler = handler if handler else Tracker(self, name, file, callback)
-    path = path if path else []
+    #handler = handler if handler else Handler(self, name, file, callback)
+    #path = path if path else []
     object.__setattr__(self, '_tracker', SimpleNamespace(handler=handler, path=path))
       
   def __deepcopy__(self, memo):
@@ -30,6 +30,8 @@ class TrackerWrapper(ObjectWrapper):
     self._tracker.handler.save()
     self._tracker.handler.save_changes = True
     
+  def __repr__(self):
+    return self.__subject__.__repr__()
     
 class DictWrapper(TrackerWrapper):
   """ Tracked dicts support attribute-like access
@@ -111,52 +113,56 @@ for wrapper_type in mutating_methods:
 
 class Persistence():
   pass
-
-class File(Persistence):
-  """ Basic file-based persistence providing several serialization format options. """
-  (PICKLE, YAML, JSON) = ('pickle', 'yaml', 'json')
-  default_format = YAML
-  """ Class default serialization format. """
   
-  def __init__(self, filename, format=None, in_memory=False):
+
+class AbstractFile(Persistence):
+  
+  file_format = 'abstract'
+  
+  def __init__(self, filename, in_memory=False):
     self.format = format if format else self.default_format
-    self.filename = filename + '.' + self.format
+    self.filename = filename + '.' + self.file_format
     self.in_memory = io.StringIO() if in_memory else None
     
     import importlib
-    self.serializer = importlib.import_module(self.format)
+    self.serializer = importlib.import_module(self.file_format)
+
+class YamlFile(AbstractFile):
+  
+  file_format = 'yaml'
     
   def load(self):
     try:
-      if self.in_memory:
-        return self.serializer.load(self.in_memory)
-      else:
-        with open(self.filename) as fp:
-          return self.serializer.load(fp)
+      with open(self.filename) as fp:
+        return self.serializer.safe_load(fp)
     except (EOFError, FileNotFoundError):
-      return {}
+      return None
     
   def dump(self, to_save):
     with open(self.filename, 'w') as fp:
-      self.serializer.dump(to_save, fp)
-      
+      self.serializer.dump(to_save, fp, default_flow_style=False, Dumper=TrackerSafeDumper)
+  
+  
+class TrackerSafeDumper(yaml.SafeDumper):
+  def represent_data(self, data):
+    if hasattr(data, '__subject__'):
+      data = data.__subject__
+    return super().represent_data(data)
 
-class Tracker(object):
+
+class Handler(object):
   
-  persistence_default = File
+  persistence_default = None
   
-  def __init__(self, root, name, persist, callback):
-    self.root = root
+  def __init__(self, subject, name, persistence, callback, path_prefix):
+    #self.root = root # subject
     self.name = name
     self.callback = callback
-    self.persistence = None
-    if isinstance(persist, Persistence):
-      self.persistence = persist(name)
-    elif isinstance(self.persistence_default, Persistence):
-      self.persistence = self.persistence_default(name)
-    
+    self.persistence = persistence
+    self.path_prefix = path_prefix
     self.change_paths = ChangePathItem()
     self.save_changes = True
+    self.root = self.start_to_track(subject, path_prefix)
  
   def on_change(self, target, func_name, *args, **kwargs):
     if self.callback:
@@ -175,6 +181,25 @@ class Tracker(object):
   def save(self):
     pass
     
+  def start_to_track(self, target, path):
+    if istracked(target):
+      return target
+    
+    tracked = None
+    
+    for abc in trackable_types:
+      if isinstance(target, abc):
+        tracked = trackable_types[abc](target, path, self)
+        
+    if not tracked and hasattr(target, '__dict__'):
+      tracked = CustomWrapper(target, path, self)
+      
+    if tracked:
+      self.make_updates(tracked)
+      return tracked
+      
+    raise TypeError("'%s' does not have a trackable type: %s" % (target, type(target)))
+    
   def make_updates(self, node):
     """ Checks to see if some of the changed node's contents now need to be tracked.
     """
@@ -187,7 +212,7 @@ class Tracker(object):
         if istracked(value):
           value._tracker.path = node._tracker.path + [key]
     for key, value in to_upgrade:
-      self.set_value(node.__subject__, key, value, track(value, None, node._tracker.path + [key], self))
+      self.set_value(node.__subject__, key, value, self.start_to_track(value, node._tracker.path + [key]))
       
   def should_upgrade(self, contained):
     if istracked(contained):
@@ -270,8 +295,10 @@ class ChangePathItem(dict):
   """ Class to enable adding a change ID to change path items. """
   
 
-def track(obj, name='default', path=None, tracker=None, persist=None, callback=None):
-  """ Main function for tracking changes to structures. 
+#def track(target, name='default', path=None, tracker=None, persist=None, callback=None):
+  
+def track(target, name='default', persist=None, callback=None, path_prefix=None):
+  """ Main function to start tracking changes to structures. 
   
   Give it a structure consisting of dicts, lists, sets and contained objects, and
   it returns an object that looks much the same but tracks changes.
@@ -286,24 +313,30 @@ def track(obj, name='default', path=None, tracker=None, persist=None, callback=N
   * `callback`: Optional - Function that is called every time the tracked structure is changed.
   """
   tracked = None
+  persistence = None
+  path_prefix = path_prefix if path_prefix is not None else []
 
-  if istracked(obj):
-    return obj
+  if istracked(target):
+    return target
+    
+  if persist is not None: #and issubclass(persist, Persistence):
+    persistence = persist(name)
+  elif Handler.persistence_default is not None: #issubclass(Handler.persistence_default, Persistence):
+    persistence = Handler.persistence_default(name)
 
-  for abc in trackable_types:
-    if isinstance(obj, abc):
-      tracked = trackable_types[abc](obj, name, path, tracker, persist, callback)
-      
-  if not tracked and hasattr(obj, '__dict__'):
-    tracked = CustomWrapper(obj, name, path, tracker, persist, callback)
+  if persistence is not None:
+    loaded_target = persistence.load()
+    if loaded_target is not None:
+      target = loaded_target
+  
+  # No persistent structure loaded, create a new
+  # handler to wrap the target structure
+  handler = Handler(target, name, persistence, callback, path_prefix)
+  
+  if persistence is not None:
+    persistence.dump(handler.root)
     
-  if tracked:
-    tracked._tracker.handler.make_updates(tracked)
-    return tracked
-    
-  if hasattr(obj, '__hash__'):
-    return obj
-  raise TypeError('Not a trackable or hashable type: ' + str(obj))
+  return handler.root
 
 def istracked(obj):
   return issubclass(type(obj), TrackerWrapper)
@@ -416,9 +449,9 @@ if __name__ == '__main__':
   assert o == res
   assert type(res) == type(m)
   
-  f = File('testing.yaml')
+  #f = File('testing.yaml')
   #print(f.load())
-  f.dump(['a', 'b'])
+  #f.dump(['a', 'b'])
   #print(f.load())
   
   g = { 'a': SimpleNamespace(b=1)}
