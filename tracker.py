@@ -8,6 +8,12 @@ import uuid
 import dictdiffer
 import pprint
 import yaml
+import importlib
+import sys
+import io
+
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
 
 class TrackerWrapper(ObjectWrapper):
   
@@ -24,6 +30,24 @@ class TrackerWrapper(ObjectWrapper):
     return copy.deepcopy(self.__subject__, memo)
     
   def __enter__(self):
+    """ Tracked objects are also context managers,
+    and can be used to manage performance and transactionality.
+    
+    All changes are persisted only on exiting the
+    context manager: 
+    
+    >>> dct = {'a': 1}
+    >>> test = YamlFile('test', testing=True)
+    >>> tracked_dct = track(dct, persist=test)
+    >>> initial_len = len(test.testing.getvalue())
+    >>> def unchanged():
+    ...   return len(test.testing.getvalue()) == initial_len
+    >>>
+    >>> with tracked_dct:
+    ...   tracked_dct['b'] = 2
+    ...   assert unchanged()
+    >>> assert not unchanged()
+    """
     self._tracker.handler.save_changes = False
     
   def __exit__(self, *exc):
@@ -37,12 +61,16 @@ class DictWrapper(TrackerWrapper):
   """ Tracked dicts support attribute-like access
   to items, if the item keys are valid attribute names.
   
-  >>> dct = track({'a': 1}, callback=catcher.cb)
+  >>> dct = track({'a': 1, 'b': {'c': 2}}, callback=catcher.cb)
   >>> dct.a
   1
-  >>> dct.b = 2
-  >>> catcher.target.b
+  >>> dct.b.c
   2
+  >>> dct.b.c = 3
+  >>> dct['b']['c']
+  3
+  >>> catcher.target.c
+  3
   >>> del dct.b
   """
   def __getattr__(self, key):
@@ -53,10 +81,16 @@ class DictWrapper(TrackerWrapper):
     raise AttributeError("'%s' object has no attribute '%s'" % (type(self).__name__, key))
     
   def __setattr__(self, key, value):
+    """
     if hasattr(self, key):
       object.__setattr__(self, key, value) #key in self:
     else:
       self[key] = value
+    """
+    if key in self:
+      self[key] = value
+    else:
+      object.__setattr__(self, key, value)
       
   def __delattr__(self, key):
     if key in self:
@@ -119,29 +153,46 @@ class AbstractFile(Persistence):
   
   file_format = 'abstract'
   
-  def __init__(self, filename, in_memory=False):
+  def __init__(self, filename, testing=False):
     self.format = format if format else self.default_format
     self.filename = filename + '.' + self.file_format
-    self.in_memory = io.StringIO() if in_memory else None
-    
-    import importlib
-    self.serializer = importlib.import_module(self.file_format)
-
-class YamlFile(AbstractFile):
-  
-  file_format = 'yaml'
+    self.testing = testing
+    if testing:
+      #import tempfile
+      self.testing = io.StringIO()#tempfile.TemporaryFile()
     
   def load(self):
     try:
-      with open(self.filename) as fp:
-        return self.serializer.safe_load(fp)
+      if self.testing:
+        self.testing.seek(0)
+        return self.loader(self.testing)
+      else:
+        with open(self.filename) as fp:
+          return self.loader(fp)
     except (EOFError, FileNotFoundError):
       return None
     
   def dump(self, to_save):
-    with open(self.filename, 'w') as fp:
-      self.serializer.dump(to_save, fp, default_flow_style=False, Dumper=TrackerSafeDumper)
+    if self.testing:
+      self.testing = io.StringIO()
+      self.dumper(to_save, self.testing)
+    else:
+      with open(self.filename, 'w') as fp:
+        self.dumper(to_save, fp)
+
+
+class YamlFile(AbstractFile):
   
+  file_format = 'yaml'
+      
+  def loader(self, fp):
+    import yaml
+    return yaml.safe_load(fp)
+      
+  def dumper(self, to_save, fp):
+    import yaml
+    yaml.dump(to_save, fp, default_flow_style=False, Dumper=TrackerSafeDumper)
+
   
 class TrackerSafeDumper(yaml.SafeDumper):
   def represent_data(self, data):
@@ -152,7 +203,7 @@ class TrackerSafeDumper(yaml.SafeDumper):
 
 class Handler(object):
   
-  persistence_default = None
+  persistence_default = YamlFile
   
   def __init__(self, subject, name, persistence, callback, path_prefix):
     #self.root = root # subject
@@ -173,13 +224,13 @@ class Handler(object):
         target=target,func_name=func_name, 
         args=args, kwargs=kwargs)
       self.callback(change_data)
-    #print(func_name, args)
     self.make_updates(target)
     self.record_change_footprint(target._tracker.path)
     if self.save_changes: self.save()
     
   def save(self):
-    pass
+    if self.persistence is not None:
+      self.persistence.dump(self.root)
     
   def start_to_track(self, target, path):
     if istracked(target):
@@ -319,8 +370,11 @@ def track(target, name='default', persist=None, callback=None, path_prefix=None)
   if istracked(target):
     return target
     
-  if persist is not None: #and issubclass(persist, Persistence):
-    persistence = persist(name)
+  if persist is not None:
+    if isinstance(persist, Persistence):
+      persistence = persist
+    elif issubclass(persist, Persistence):
+      persistence = persist(name)
   elif Handler.persistence_default is not None: #issubclass(Handler.persistence_default, Persistence):
     persistence = Handler.persistence_default(name)
 
@@ -412,9 +466,20 @@ if __name__ == '__main__':
         self.__dict__[key] = change.__dict__[key]
   
   import doctest
-  catcher = TestCatcher()
-  doctest.testfile('README.md', extraglobs={'catcher': catcher})
-  doctest.testmod(extraglobs={'catcher': catcher})
+  extraglobs = {
+    'catcher': TestCatcher()
+  }
+  
+  Handler.persistence_default = None
+  
+  doctest.testmod(extraglobs=extraglobs)
+  extraglobs.update(importlib.import_module('tracker').__dict__)
+  
+  doctest.testfile('README.md', extraglobs=extraglobs)
+  
+  # Remove temporary example files
+  from os import remove
+  remove('example-config.yaml')
   
   l = [0, 2]
   m = track(l)
@@ -449,13 +514,10 @@ if __name__ == '__main__':
   assert o == res
   assert type(res) == type(m)
   
-  #f = File('testing.yaml')
-  #print(f.load())
-  #f.dump(['a', 'b'])
-  #print(f.load())
-  
   g = { 'a': SimpleNamespace(b=1)}
   catcher = TestCatcher()
   h = track(g, callback=catcher.cb)
   h.a.b = 'new value'
   assert catcher.target.b == 'new value'
+  
+  h.a._tracker.foobar = 'blaa'
