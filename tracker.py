@@ -37,7 +37,7 @@ class TrackerWrapper(ObjectWrapper):
     context manager: 
     
     >>> dct = {'a': 1}
-    >>> test = YamlFile('test', testing=True)
+    >>> test = SafeYamlFile('test', testing=True)
     >>> tracked_dct = track(dct, persist=test)
     >>> initial_len = len(test.testing.getvalue())
     >>> def unchanged():
@@ -53,7 +53,7 @@ class TrackerWrapper(ObjectWrapper):
   def __exit__(self, *exc):
     self._tracker.handler.save()
     self._tracker.handler.save_changes = True
-    
+  
   def __repr__(self):
     return self.__subject__.__repr__()
     
@@ -181,7 +181,7 @@ class AbstractFile(Persistence):
         self.dumper(to_save, fp)
 
 
-class YamlFile(AbstractFile):
+class SafeYamlFile(AbstractFile):
   
   file_format = 'yaml'
       
@@ -201,9 +201,22 @@ class TrackerSafeDumper(yaml.SafeDumper):
     return super().represent_data(data)
 
 
+class JsonDBM(Persistence):
+  
+  def __init__(self, filename):
+    self.filename = filename + '.dbm'
+    self.db = open(self.filename, 'c')
+  
+  def load(self):
+    return RestrictedUnpickler
+    
+  def dump(self, to_save):
+    pass
+    
+
 class Handler(object):
   
-  persistence_default = YamlFile
+  persistence_default = SafeYamlFile
   
   def __init__(self, subject, name, persistence, callback, path_prefix):
     #self.root = root # subject
@@ -242,10 +255,10 @@ class Handler(object):
       if isinstance(target, abc):
         tracked = trackable_types[abc](target, path, self)
         
-    if not tracked and hasattr(target, '__dict__'):
+    if tracked is None and hasattr(target, '__dict__'):
       tracked = CustomWrapper(target, path, self)
       
-    if tracked:
+    if tracked is not None:
       self.make_updates(tracked)
       return tracked
       
@@ -370,13 +383,14 @@ def track(target, name='default', persist=None, callback=None, path_prefix=None)
   if istracked(target):
     return target
     
-  if persist is not None:
-    if isinstance(persist, Persistence):
-      persistence = persist
-    elif issubclass(persist, Persistence):
-      persistence = persist(name)
-  elif Handler.persistence_default is not None: #issubclass(Handler.persistence_default, Persistence):
-    persistence = Handler.persistence_default(name)
+  if persist is not False:
+    if persist is not None and persist is not True:
+      if isinstance(persist, Persistence):
+        persistence = persist
+      elif issubclass(persist, Persistence):
+        persistence = persist(name)
+    elif Handler.persistence_default is not None: #issubclass(Handler.persistence_default, Persistence):
+      persistence = Handler.persistence_default(name)
 
   if persistence is not None:
     loaded_target = persistence.load()
