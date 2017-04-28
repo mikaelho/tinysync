@@ -5,7 +5,7 @@
 Sync Python dicts and other data structures to:
 
 1. File: Configuration files and similar
-2. Database: Persisting larger data sets
+2. DBM: Persisting larger data sets
 1. UI: Reacting to changes in data model
 1. Another device: Differential data synchronization
 
@@ -13,7 +13,7 @@ Sync Python dicts and other data structures to:
 
 Say you have data structure, built primarily with dicts and lists, maybe also with sets and other objects. As an example, some kind of configuration data:
   
-    >>> default_conf = {
+    >>> conf = {
     ...   'endpoint': {
     ...     'protocol': 'HTTP',
     ...     'address':  'docs.python.org' },
@@ -22,9 +22,9 @@ Say you have data structure, built primarily with dicts and lists, maybe also wi
   
 Give the structure to tracker with a name, and it will be persisted, by default as YAML, to a file called _name_.yaml:
 
-    >>> conf = track(default_conf, 'example-config')
+    >>> conf = track(conf, 'example-config')
   
-If a file already exists, `conf` will now be the structure created based on the contents of the file. Otherwise, structure given to `track` - `default_conf` in the example - is used as the initial valie and saved to file.
+If a file already exists, `conf` will now be the structure created based on the contents of the file. Otherwise, structure given to `track` - `conf`, here - is used as the initial value and saved to file.
 
 Use the object returned by `track` as you would have used the original structure to access and update it.
 
@@ -60,6 +60,19 @@ Writing the whole structure to file after every change can become a performance 
 
 YAML, while very nice for human-readable files, can also be relatively slow. You can also save in JSON, non-safe YAML, pickle and shelve formats - see instructions and the fine print in the section [Persistence options].
 
+### Sync to DBM
+
+If your data structure goes larger, performance suffers if I always serialize the whole structure to file. DBM-based option assumes that the root of the structure is a dict, and only saves the branch (key) that was changed.
+
+In terms of the tinysync API, using DBM-based persistence is not much different from other options:
+
+    >>> large = {
+    ...   'one branch': 'lots of data',
+    ...   'other branch': 'even more data'
+    ... }
+    >>> large = track(large, 'example-dbm', persist=JsonDBM)
+    >>> large['one branch'] = 'changed data'
+
 ### Sync UI
 
 You can use the tracked data structure as the model in the Model-View-Controller pattern, by giving `track` a callback function that is called and updates the user-visible UI View every time the data is changed.
@@ -89,37 +102,27 @@ Now whenever a 'Controller' changes the 'Model', 'View' is automatically updated
     >>> user_dir.regulars.add("Another User")
     Number of users: 2
 
-Note that if you use the context manager and make several changes to the structure, there will only be one change notification where the parameter is a list of change data objects.
-
 Here are information elements provided as attributes of the single change callback argument:
- 
+
 * root: The object reference you gave to the `track` function.
 * name: Name you gave to the `track` function.
 * path: Path from the root of the structure to the changed part, as a list. Empty list means the root has changed. Might not correspond to the actual path used in code if your structure is not a tree.
 * func_name: Name of the function used to modify the structure (`__setitem__`, `append`, etc.)
 * args and kwargs: Function arguments.
-* target: The part of the structure that was modified. For example:
+* target: The part of the structure that was modified.
 
-    >>> family = track({
+An example to illustrate what the target is:
+
+    >>> family = {
     ...   'parents': {},
     ...   'siblings': []
-    ... }, 'family', callback=catcher.cb, persist=False)
+    ... }
+    >>> family = track(family, callback=catcher.cb, persist=False)
     >>> family.siblings.append('Brother')
     >>> catcher.target # is the list that was appended to
     ['Brother']
  
  Note that all of these elements are direct references; you need to deepcopy them if you want to retain an unmutable snapshot.
-
-    {'args': ('admin', 'Administrator'),
-     'func_name': '__setitem__',
-     'kwargs': {},
-     'name': 'user directory',
-     'path': [],
-     'root': {'admin': 'Administrator'},
-     'target': {'admin': 'Administrator'}}
-
-
-
 
 ### Sync between devices
 

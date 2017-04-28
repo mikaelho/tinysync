@@ -8,9 +8,10 @@ import uuid
 import dictdiffer
 import pprint
 import yaml
+import dbm
+import json
 import importlib
-import sys
-import io
+import sys, io
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
@@ -81,12 +82,6 @@ class DictWrapper(TrackerWrapper):
     raise AttributeError("'%s' object has no attribute '%s'" % (type(self).__name__, key))
     
   def __setattr__(self, key, value):
-    """
-    if hasattr(self, key):
-      object.__setattr__(self, key, value) #key in self:
-    else:
-      self[key] = value
-    """
     if key in self:
       self[key] = value
     else:
@@ -146,7 +141,19 @@ for wrapper_type in mutating_methods:
     getattr(wrapper_type, func_name).__name__ = func_name
 
 class Persistence():
-  pass
+  
+  def load(self):
+    """Load whole structure from persistence provider."""
+    
+  def load_specific(self, key):
+    """Load a specific part of the structure, indicated by key."""
+    
+  def change_advisory(self, change):
+    """Information about a change."""
+    
+  def dump(self, to_save, initial=False):
+    """Persist the given structure.
+    Initial save may be different in some cases."""
   
 
 class AbstractFile(Persistence):
@@ -171,8 +178,14 @@ class AbstractFile(Persistence):
           return self.loader(fp)
     except (EOFError, FileNotFoundError):
       return None
+      
+  def load_specific(self, key):
+    """ For file-based persistence, key is ignored,
+    thus in effect identical to calling load().
+    """
+    return self.load()
     
-  def dump(self, to_save):
+  def dump(self, to_save, initial=False):
     if self.testing:
       self.testing = io.StringIO()
       self.dumper(to_save, self.testing)
@@ -192,7 +205,6 @@ class SafeYamlFile(AbstractFile):
   def dumper(self, to_save, fp):
     import yaml
     yaml.dump(to_save, fp, default_flow_style=False, Dumper=TrackerSafeDumper)
-
   
 class TrackerSafeDumper(yaml.SafeDumper):
   def represent_data(self, data):
@@ -205,15 +217,40 @@ class JsonDBM(Persistence):
   
   def __init__(self, filename):
     self.filename = filename + '.dbm'
-    self.db = open(self.filename, 'c')
+    self.db = dbm.open(self.filename, 'c')
+    self.changed_keys = self.deleted_keys = set()
   
   def load(self):
-    return RestrictedUnpickler
+    return_value = {}
+    for key in self.db:
+      return_value[key] = self.load_specific(key)
+    return return_value
     
-  def dump(self, to_save):
-    pass
+  def load_specific(self, key):
+    return json.loads(self.db[key].decode())
     
-
+  def change_advisory(self, change):
+    assert type(change.root) == DictWrapper
+    if len(change.path) == 0:
+      if change.func_name == '__setitem__':
+        self.changed_keys.add(change.args[0])
+      if change.func_name == '__delitem__':
+        self.deleted_keys.add(change.args[0])
+    else:
+      self.changed_keys.add(change.path[0])
+    
+  def dump(self, to_save, initial=False):
+    assert type(to_save) == DictWrapper
+    if initial:
+      self.changed_keys = (key in to_save)       
+    for key in self.changed_keys:
+      self.db[key] = json.dumps(to_save[key])
+    self.changed_keys = set()
+    for key in self.deleted_keys:
+      del self.db[key]
+    self.deleted_keys = set()
+    
+    
 class Handler(object):
   
   persistence_default = SafeYamlFile
@@ -229,18 +266,25 @@ class Handler(object):
     self.root = self.start_to_track(subject, path_prefix)
  
   def on_change(self, target, func_name, *args, **kwargs):
-    if self.callback:
-      change_data = SimpleNamespace(
-        name=self.name,
-        root=self.root,
-        path=target._tracker.path, 
-        target=target,func_name=func_name, 
-        args=args, kwargs=kwargs)
-      self.callback(change_data)
+    change_data = SimpleNamespace(
+      name=self.name,
+      root=self.root,
+      path=target._tracker.path, 
+      target=target,func_name=func_name, 
+      args=args, kwargs=kwargs
+    )
+      
     self.make_updates(target)
     self.record_change_footprint(target._tracker.path)
-    if self.save_changes: self.save()
     
+    if self.callback:
+      self.callback(change_data)
+    
+    if self.persistence is not None:
+      self.persistence.change_advisory(change_data)
+      if self.save_changes: 
+        self.save()
+        
   def save(self):
     if self.persistence is not None:
       self.persistence.dump(self.root)
@@ -392,17 +436,17 @@ def track(target, name='default', persist=None, callback=None, path_prefix=None)
     elif Handler.persistence_default is not None: #issubclass(Handler.persistence_default, Persistence):
       persistence = Handler.persistence_default(name)
 
+  initial = True
   if persistence is not None:
     loaded_target = persistence.load()
     if loaded_target is not None:
       target = loaded_target
+      initial = False
   
-  # No persistent structure loaded, create a new
-  # handler to wrap the target structure
   handler = Handler(target, name, persistence, callback, path_prefix)
   
   if persistence is not None:
-    persistence.dump(handler.root)
+    persistence.dump(handler.root, initial=initial)
     
   return handler.root
 
@@ -492,8 +536,10 @@ if __name__ == '__main__':
   doctest.testfile('README.md', extraglobs=extraglobs)
   
   # Remove temporary example files
-  from os import remove
-  remove('example-config.yaml')
+  import os, glob
+  os.remove('example-config.yaml')
+  for f in glob.glob("example-dbm.dbm.*"):
+    os.remove(f)
   
   l = [0, 2]
   m = track(l)
