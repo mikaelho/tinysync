@@ -1,5 +1,5 @@
 #coding: utf-8
-from proxies import ObjectWrapper
+
 from collections.abc import MutableSequence, MutableMapping, MutableSet
 from types import SimpleNamespace
 import copy
@@ -7,249 +7,13 @@ import itertools
 import uuid
 import dictdiffer
 import pprint
-import yaml
-import dbm
-import json
-import importlib
 import sys, io
+import importlib
 
-def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
+from wrappers import *
+from persistence import *
+from util import *
 
-class TrackerWrapper(ObjectWrapper):
-  
-  _tracker = None
-  
-  def __init__(self, obj, path, handler):
-    ObjectWrapper.__init__(self, obj)
-    
-    #handler = handler if handler else Handler(self, name, file, callback)
-    #path = path if path else []
-    object.__setattr__(self, '_tracker', SimpleNamespace(handler=handler, path=path))
-      
-  def __deepcopy__(self, memo):
-    return copy.deepcopy(self.__subject__, memo)
-    
-  def __enter__(self):
-    """ Tracked objects are also context managers,
-    and can be used to manage performance and transactionality.
-    
-    All changes are persisted only on exiting the
-    context manager: 
-    
-    >>> dct = {'a': 1}
-    >>> test = SafeYamlFile('test', testing=True)
-    >>> tracked_dct = track(dct, persist=test)
-    >>> initial_len = len(test.testing.getvalue())
-    >>> def unchanged():
-    ...   return len(test.testing.getvalue()) == initial_len
-    >>>
-    >>> with tracked_dct:
-    ...   tracked_dct['b'] = 2
-    ...   assert unchanged()
-    >>> assert not unchanged()
-    """
-    self._tracker.handler.save_changes = False
-    
-  def __exit__(self, *exc):
-    self._tracker.handler.save()
-    self._tracker.handler.save_changes = True
-  
-  def __repr__(self):
-    return self.__subject__.__repr__()
-    
-class DictWrapper(TrackerWrapper):
-  """ Tracked dicts support attribute-like access
-  to items, if the item keys are valid attribute names.
-  
-  >>> dct = track({'a': 1, 'b': {'c': 2}}, callback=catcher.cb)
-  >>> dct.a
-  1
-  >>> dct.b.c
-  2
-  >>> dct.b.c = 3
-  >>> dct['b']['c']
-  3
-  >>> catcher.target.c
-  3
-  >>> del dct.b
-  """
-  def __getattr__(self, key):
-    if key in self:
-      return self[key]
-    if hasattr(self, '__subject__'):
-      return getattr(self.__subject__, key)
-    raise AttributeError("'%s' object has no attribute '%s'" % (type(self).__name__, key))
-    
-  def __setattr__(self, key, value):
-    if key in self:
-      self[key] = value
-    else:
-      object.__setattr__(self, key, value)
-      
-  def __delattr__(self, key):
-    if key in self:
-      del self[key]
-      return
-    if hasattr(self, '__subject__'):
-       delattr(self.__subject__, key)
-       return
-    raise AttributeError("'%s' object has no attribute '%s'" % (type(self).__name__, key))
-    
-    
-class ListWrapper(TrackerWrapper): pass
-
-
-class SetWrapper(TrackerWrapper): pass
-
-
-class CustomWrapper(TrackerWrapper):
-  """ If an object has a __dict__ attribute,
-  we track attribute changes.
-  
-  >>> custom_object = SimpleNamespace(a=1)
-  >>> tracked_object = track(custom_object, callback=catcher.cb)
-  >>> tracked_object.a = 'new value'
-  >>> catcher.target.a
-  'new value'
-  """
-
-trackable_types = {
-  MutableSequence: ListWrapper,
-  MutableMapping: DictWrapper,
-  MutableSet: SetWrapper
-}
-
-mutating_methods = {
-  CustomWrapper: [ '__setattr__'],
-  DictWrapper: 
-    ['__setitem__', '__delitem__', 'pop', 'popitem', 'clear', 'update', 'setdefault'],
-  ListWrapper: 
-    ['__setitem__', '__delitem__', 'insert', 'append', 'reverse', 'extend', 'pop', 'remove', 'clear', '__iadd__'],
-  SetWrapper: 
-    ['add', 'discard', 'clear', 'pop', 'remove', '__ior__', '__iand__', '__ixor__', '__isub__']
-}
-
-# Add tracking wrappers to all mutating functions
-for wrapper_type in mutating_methods:
-  for func_name in mutating_methods[wrapper_type]:
-    def func(self, *args, tracker_function_name=func_name, **kwargs):
-      return_value = getattr(self.__subject__, tracker_function_name)(*args, **kwargs)
-      self._tracker.handler.on_change(self, tracker_function_name, *args, **kwargs)
-      return return_value
-    setattr(wrapper_type, func_name, func)
-    getattr(wrapper_type, func_name).__name__ = func_name
-
-class Persistence():
-  
-  def load(self):
-    """Load whole structure from persistence provider."""
-    
-  def load_specific(self, key):
-    """Load a specific part of the structure, indicated by key."""
-    
-  def change_advisory(self, change):
-    """Information about a change."""
-    
-  def dump(self, to_save, initial=False):
-    """Persist the given structure.
-    Initial save may be different in some cases."""
-  
-
-class AbstractFile(Persistence):
-  
-  file_format = 'abstract'
-  
-  def __init__(self, filename, testing=False):
-    self.format = format if format else self.default_format
-    self.filename = filename + '.' + self.file_format
-    self.testing = testing
-    if testing:
-      #import tempfile
-      self.testing = io.StringIO()#tempfile.TemporaryFile()
-    
-  def load(self):
-    try:
-      if self.testing:
-        self.testing.seek(0)
-        return self.loader(self.testing)
-      else:
-        with open(self.filename) as fp:
-          return self.loader(fp)
-    except (EOFError, FileNotFoundError):
-      return None
-      
-  def load_specific(self, key):
-    """ For file-based persistence, key is ignored,
-    thus in effect identical to calling load().
-    """
-    return self.load()
-    
-  def dump(self, to_save, initial=False):
-    if self.testing:
-      self.testing = io.StringIO()
-      self.dumper(to_save, self.testing)
-    else:
-      with open(self.filename, 'w') as fp:
-        self.dumper(to_save, fp)
-
-
-class SafeYamlFile(AbstractFile):
-  
-  file_format = 'yaml'
-      
-  def loader(self, fp):
-    import yaml
-    return yaml.safe_load(fp)
-      
-  def dumper(self, to_save, fp):
-    import yaml
-    yaml.dump(to_save, fp, default_flow_style=False, Dumper=TrackerSafeDumper)
-  
-class TrackerSafeDumper(yaml.SafeDumper):
-  def represent_data(self, data):
-    if hasattr(data, '__subject__'):
-      data = data.__subject__
-    return super().represent_data(data)
-
-
-class JsonDBM(Persistence):
-  
-  def __init__(self, filename):
-    self.filename = filename + '.dbm'
-    self.db = dbm.open(self.filename, 'c')
-    self.changed_keys = self.deleted_keys = set()
-  
-  def load(self):
-    return_value = {}
-    for key in self.db:
-      return_value[key] = self.load_specific(key)
-    return return_value
-    
-  def load_specific(self, key):
-    return json.loads(self.db[key].decode())
-    
-  def change_advisory(self, change):
-    assert type(change.root) == DictWrapper
-    if len(change.path) == 0:
-      if change.func_name == '__setitem__':
-        self.changed_keys.add(change.args[0])
-      if change.func_name == '__delitem__':
-        self.deleted_keys.add(change.args[0])
-    else:
-      self.changed_keys.add(change.path[0])
-    
-  def dump(self, to_save, initial=False):
-    assert type(to_save) == DictWrapper
-    if initial:
-      self.changed_keys = (key in to_save)       
-    for key in self.changed_keys:
-      self.db[key] = json.dumps(to_save[key])
-    self.changed_keys = set()
-    for key in self.deleted_keys:
-      del self.db[key]
-    self.deleted_keys = set()
-    
     
 class Handler(object):
   
@@ -288,9 +52,14 @@ class Handler(object):
   def save(self):
     if self.persistence is not None:
       self.persistence.dump(self.root)
+      
+  def load(self, key, path):
+    value = self.persistence.load_specific(key)
+    tracked_value = self.start_to_track(value, path + [key])
+    return tracked_value
     
   def start_to_track(self, target, path):
-    if istracked(target):
+    if istracked(target) or isinstance(target, LazyLoadMarker):
       return target
     
     tracked = None
@@ -413,12 +182,11 @@ def track(target, name='default', persist=None, callback=None, path_prefix=None)
   
   Parameters:
   
-  * `obj`: The data structure to track.
+  * `target`: The data structure to track.
   * `name`: Name is used for persistence, e.g. as the file name. It is also included in change notifications.
-  * `path`: Optional - Path prefix as a list of segments.
-  * `tracker`: Optional - Pre-existing handler.
   * `persist`: Optional - Overrides class default persistence setting as defined by the `Tracker` class `default_persistence` attribute.
   * `callback`: Optional - Function that is called every time the tracked structure is changed.
+  * `path_prefix`: Optional - Path prefix as a list of segments.
   """
   tracked = None
   persistence = None
@@ -541,8 +309,9 @@ if __name__ == '__main__':
   for f in glob.glob("example-dbm.dbm.*"):
     os.remove(f)
   
+  """
   l = [0, 2]
-  m = track(l)
+  m = track(l, persist=False)
   with m:
     m[0] = { 'a': {'b': {'c', 'd'}}}
     m.append(3)
@@ -581,3 +350,4 @@ if __name__ == '__main__':
   assert catcher.target.b == 'new value'
   
   h.a._tracker.foobar = 'blaa'
+  """

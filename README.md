@@ -60,18 +60,20 @@ Writing the whole structure to file after every change can become a performance 
 
 YAML, while very nice for human-readable files, can also be relatively slow. You can also save in JSON, non-safe YAML, pickle and shelve formats - see instructions and the fine print in the section [Persistence options].
 
-### Sync to DBM
+### Sync to database
 
-If your data structure goes larger, performance suffers if I always serialize the whole structure to file. DBM-based option assumes that the root of the structure is a dict, and only saves the branch (key) that was changed.
+If the data structure goes larger, performance suffers if I always serialize the whole structure to file. DBM-based option assumes that the root of the structure is a dict, and only saves the branch (key) that was changed. Also, the value of a specific key is only loaded when needed. Thus the performance is improved if you can divide your large data structure into sensible chunks, and especially if you typically only access and update some of the values.
 
-In terms of the tinysync API, using DBM-based persistence is not much different from other options:
+Of course, these optimizations are invisible to you as the user of the API:
 
     >>> large = {
     ...   'one branch': 'lots of data',
     ...   'other branch': 'even more data'
     ... }
     >>> large = track(large, 'example-dbm', persist=JsonDBM)
-    >>> large['one branch'] = 'changed data'
+    >>> large['one branch'] # Lazily loaded
+    'lots of data'
+    >>> large['one branch'] = 'changed data' # Saved by specific key
 
 ### Sync UI
 
@@ -143,7 +145,7 @@ An example to illustrate what the target is:
 ## Examples
     
     >>> lst = [1, 2]
-    >>> tracked_list = track(lst, callback=catcher.cb)
+    >>> tracked_list = track(lst, persist=False, callback=catcher.cb)
   
 catcher.cb is a test change callback which simply records the latest change information:
 
