@@ -1,5 +1,3 @@
-import yaml
-import dbm
 import json
 import importlib
 
@@ -18,7 +16,10 @@ class Persistence():
     
   def dump(self, to_save, initial=False):
     """Persist the given structure.
-    Initial save may be different in some cases."""
+    Initial save may be different in some cases.
+    
+    Returns a list of conflicts from the persistence layer or None if no conflicts.
+    Conflicts are reported as a list of (path, new value) tuples. """
     
 
 class AbstractFile(Persistence):
@@ -62,46 +63,36 @@ class AbstractFile(Persistence):
 class SafeYamlFile(AbstractFile):
   
   file_format = 'yaml'
+  
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    globals()['yaml'] = importlib.import_module('yaml')
       
   def loader(self, fp):
-    import yaml
     return yaml.safe_load(fp)
       
   def dumper(self, to_save, fp):
-    import yaml
-    yaml.dump(to_save, fp, default_flow_style=False, Dumper=TrackerSafeDumper)
-  
-class TrackerSafeDumper(yaml.SafeDumper):
-  def represent_data(self, data):
-    if hasattr(data, '__subject__'):
-      data = data.__subject__
-    return super().represent_data(data)
-
-
-class JsonDBM(Persistence):
-  
-  def __init__(self, filename):
-    self.filename = filename + '.dbm'
-    self.db = dbm.open(self.filename, 'n')
-    self.changed_keys = self.deleted_keys = set()
-  
-  def __del__(self):
-    self.db.close()
-  
-  def load(self):
-    try:
-      if len(self.db) == 0:
-        return None
-      return_value = {}
-      for key in self.db:
-        eprint(key)
-        return_value[key.decode()] = LazyLoadMarker()
-      return return_value
-    except (EOFError, FileNotFoundError):
-      return None
     
-  def load_specific(self, key):
-    return json.loads(self.db[key].decode())
+    class TrackerSafeDumper(yaml.SafeDumper):
+      def represent_data(self, data):
+        if hasattr(data, '__subject__'):
+          data = data.__subject__
+        return super().represent_data(data)
+    
+    yaml.dump(to_save, fp, default_flow_style=False, Dumper=TrackerSafeDumper)
+
+
+class LazyPersistence(Persistence):
+  """Persistence options that assume that the
+  structure starts with a dict, and separate parts of the structure can be updated and loaded by 
+  key, instead of the whole structure.
+  
+  Subclass __init__ functions should set a self.db
+  value to be used in the other operations.
+  """
+  
+  def __init__(self):
+    self.changed_keys = self.deleted_keys = set()
     
   def change_advisory(self, change):
     assert hasattr(change.root, '__getitem__')
@@ -112,6 +103,31 @@ class JsonDBM(Persistence):
         self.deleted_keys.add(change.args[0])
     else:
       self.changed_keys.add(change.path[0])
+
+class JsonDBM(LazyPersistence):
+  
+  def __init__(self, filename):
+    super().__init__()
+    globals()['dbm'] = importlib.import_module('dbm')
+    self.filename = filename + '.dbm'
+    self.db = dbm.open(self.filename, 'n')
+  
+  def __del__(self):
+    self.db.close()
+  
+  def load(self):
+    try:
+      if len(self.db) == 0:
+        return None
+      return_value = {}
+      for key in self.db:
+        return_value[key.decode()] = LazyLoadMarker()
+      return return_value
+    except (EOFError, FileNotFoundError):
+      return None
+    
+  def load_specific(self, key):
+    return json.loads(self.db[key].decode())
     
   def dump(self, to_save, initial=False):
     assert hasattr(to_save, '__getitem__')
@@ -124,3 +140,75 @@ class JsonDBM(Persistence):
       del self.db[key]
     self.deleted_keys = set()
     
+    
+class CouchDB(Persistence):
+  """ Save structure to CouchDB, or a variant
+  like Cloudant.
+  Root must be a dict, likewise the elements 
+  contained in the root dict, which are further 
+  polluted by CouchDB _id and _rev elements
+  (where _id == key in the root dict).
+  """
+  
+  def __init__(self, database_name, url=None):
+    super().__init__()
+    globals()['couchdb'] = importlib.import_module('couchdb')
+    
+    self.name = database_name
+    
+    if url is None:
+      self.server = couchdb.Server()
+    else:
+      self.server = couchdb.Server(url)
+    try:
+      self.db = self.server[database_name]
+    except couchdb.http.ResourceNotFound:
+      self.db = self.server.create(database_name)
+    
+  def load(self):
+    if len(self.db) == 0:
+      return None
+    return_value = {}
+    for key in self.db:
+      return_value[key] = LazyLoadMarker()
+    return return_value
+    
+  def load_specific(self, key):
+    return self.db[key]
+    #del doc['_id']
+    #self.revs[key] = doc['_rev']
+    #del doc['_rev']
+    #return doc
+    
+  def dump(self, to_save, initial=False):
+    assert hasattr(to_save, '__getitem__')
+    conflicts = []
+    if initial:
+      self.changed_keys = (key for key in to_save)       
+    for key in self.changed_keys:
+      doc = to_save[key]
+      assert isinstance(doc, MutableMapping)
+      doc['_id'] = key
+      try:
+        (_, rev) = self.db.save(doc)
+        doc['_rev'] = rev
+      except couchdb.ResourceException:
+        self.add_to_conflicts(conflicts, key)
+    self.changed_keys = set()
+    for key in self.deleted_keys:
+      doc = to_save[key]
+      doc['_id'] = key
+      try:
+        self.db.delete(key)
+      except couchdb.ResourceException:
+        return self.add_to_conflicts(conflicts, key)
+    self.deleted_keys = set()
+    return None if len(conflicts) == 0 else conflicts
+    
+  def add_to_conflicts(self, conflicts, key):
+    updated_value = self.db[key]
+    conflicts.append((key, updated_value))
+      
+  def clean(self):
+    """ Convenience function that deletes the underlying CouchDB database. """
+    self.server.delete(self.name)

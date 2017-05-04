@@ -51,7 +51,8 @@ class Handler(object):
         
   def save(self):
     if self.persistence is not None:
-      self.persistence.dump(self.root)
+      conflicts = self.persistence.dump(self.root)
+    
       
   def load(self, key, path):
     value = self.persistence.load_specific(key)
@@ -296,10 +297,11 @@ if __name__ == '__main__':
     'catcher': TestCatcher()
   }
   
-  Handler.persistence_default = None
+  #Handler.persistence_default = None
   
   doctest.testmod(extraglobs=extraglobs)
   extraglobs.update(importlib.import_module('tracker').__dict__)
+  extraglobs.update(track({}, 'couchdb-conf'))
   
   doctest.testfile('README.md', extraglobs=extraglobs)
   

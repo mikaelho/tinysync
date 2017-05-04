@@ -50,7 +50,7 @@ All changes to the structure are automatically saved to the file. Default format
     - 10
     <BLANKLINE>
     
-(`<BLANKLINE>` above just means a blank line in the file. It is included in the example for doctests to work.)
+(Notes: As the contents of the data structure are written to file, dict keys are outputted in alphabetical order, disregarding any meaningful order I might have had when inserting the keys to the structure or when manually editing the file. Also, `<BLANKLINE>` above just means a blank line in the file. It is included in the example for doctests to work.)
 
 Writing the whole structure to file after every change can become a performance issue. To mitigate this, tracked objects also act as context managers, only saving at the successful completion of the block:
 
@@ -61,6 +61,8 @@ Writing the whole structure to file after every change can become a performance 
 YAML, while very nice for human-readable files, can also be relatively slow. You can also save in JSON, non-safe YAML, pickle and shelve formats - see instructions and the fine print in the section [Persistence options].
 
 ### Sync to database
+
+#### DBM
 
 If the data structure goes larger, performance suffers if I always serialize the whole structure to file. DBM-based option assumes that the root of the structure is a dict, and only saves the branch (key) that was changed. Also, the value of a specific key is only loaded when needed. Thus the performance is improved if you can divide your large data structure into sensible chunks, and especially if you typically only access and update some of the values.
 
@@ -74,6 +76,17 @@ Of course, these optimizations are invisible to you as the user of the API:
     >>> large['one branch'] # Lazily loaded
     'lots of data'
     >>> large['one branch'] = 'changed data' # Saved by specific key
+
+#### CouchDB
+
+If your data is a "JSON-compatible dict of dicts", you can use a real database like CouchDB for persistence.
+
+    >>> cdb = CouchDB('database_name', couchdb_url)
+    
+As a convenience method, this persistence option provides a clean-up function that can benused to delete the database:
+
+    >>> cdb.clean()
+    
 
 ### Sync UI
 
