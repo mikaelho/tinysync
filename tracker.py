@@ -308,6 +308,12 @@ def revert(changes, target, in_place=False):
     target = deepcopy_tracked(target)  
   dictdiffer.revert(changes, target, in_place=True)
   return target
+  
+def dot_off():
+  trackable_types[MutableMapping] = DictWrapper_Not
+  
+def dot_on():
+  trackable_types[MutableMapping] = DictWrapper_Dot
 
 if __name__ == '__main__':
   

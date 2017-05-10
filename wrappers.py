@@ -65,8 +65,13 @@ class TrackerWrapper(ObjectWrapper):
   
   def __repr__(self):
     return self.__subject__.__repr__()
-    
-class DictWrapper(TrackerWrapper):
+ 
+ 
+class DictWrapper_Not(TrackerWrapper):
+  pass   
+       
+             
+class DictWrapper_Dot(DictWrapper_Not):
   """ Tracked dicts support attribute-like access
   to items, if the item keys are valid attribute names.
   
@@ -101,10 +106,10 @@ class DictWrapper(TrackerWrapper):
     
   @synchronized
   def __setattr__(self, key, value):
-    if key in self:
-      self[key] = value
-    else:
-      object.__setattr__(self, key, value)
+    #if key in self:
+    self[key] = value
+    #else:
+    #object.__setattr__(self, key, value)
    
   @synchronized
   def __delattr__(self, key):
@@ -115,6 +120,8 @@ class DictWrapper(TrackerWrapper):
        delattr(self.__subject__, key)
        return
     raise AttributeError("'%s' object has no attribute '%s'" % (type(self).__name__, key))
+    
+DictWrapper = DictWrapper_Dot  
     
     
 class ListWrapper(TrackerWrapper): pass
@@ -142,7 +149,7 @@ trackable_types = {
 
 mutating_methods = {
   CustomWrapper: [ '__setattr__'],
-  DictWrapper: 
+  DictWrapper_Not: 
     ['__setitem__', '__delitem__', 'pop', 'popitem', 'clear', 'update', 'setdefault'],
   ListWrapper: 
     ['__setitem__', '__delitem__', 'insert', 'append', 'reverse', 'extend', 'pop', 'remove', 'clear', '__iadd__'],

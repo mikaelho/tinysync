@@ -2,12 +2,12 @@
 
 ## Use Cases
 
-Sync Python dicts and other data structures to:
+Sync Python dicts and other data structures with:
 
-1. [File](#sync-with-files): Configuration files and similar
+1. [Files](#sync-with-files): Configuration files and similar
 1. [UI](#sync-ui): Reacting to changes in the data model
-1. [Database](#sync-to-database): Persisting larger data sets
-1. Another device: Differential data synchronization
+1. [Databases](#sync-to-database): Persisting larger data sets
+1. Other devices: Differential data synchronization
 
 ### Sync with files
 
@@ -35,6 +35,8 @@ For dicts, you have the option of using attribute access (dot) syntax.
     >>> conf.endpoint.protocol
     'HTTP'
 
+(If you do not like this option, you can turn it off - see the fine print on [dot access](#dot-access).)
+
 All changes to the structure are automatically saved to the file. Default format for saving the structure, "safe" YAML, is easy to read and edit manually if needed:
     
     >>> with open('example-config.yaml') as f:
@@ -50,13 +52,15 @@ All changes to the structure are automatically saved to the file. Default format
     - 10
     <BLANKLINE>
     
-(Notes: As the contents of the data structure are written to file, dict keys are outputted in alphabetical order, disregarding any meaningful order I might have had when inserting the keys to the structure or when manually editing the file. Also, `<BLANKLINE>` above just means a blank line in the file. It is included in the example for doctests to work.)
+(As the contents of the data structure are written to file, dict keys are outputted in alphabetical order, disregarding any meaningful order I might have had when inserting the keys to the structure or when manually editing the file. Also, `<BLANKLINE>` above just means a blank line in the file. It is included in the example for doctests to work.)
 
 Writing the whole structure to file after every change can become a performance issue. To mitigate this, tracked objects also act as context managers, only saving at the successful completion of the block:
 
     >>> with conf:
     ...   conf.endpoint.protocol = 'HTTPS'
     ...   conf.retry_intervals[0] = 2
+
+Context manager blocks are also thread safe, see the [fine print](#thread-safety) for details.
 
 YAML, while very nice for human-readable files, can also be relatively slow. You can also save in JSON, non-safe YAML, pickle and shelve formats - see instructions and the fine print in the section [Persistence options].
 
@@ -156,45 +160,72 @@ As a convenience method, this persistence option provides a clean-up function th
 
 ## Fine print
 
+Here I cover the hairy details of some of the features described in the previous section:
+
+1. [Thread safety](#thread-safety)
+2. [Dot access](#dot-access) to dict contents
+
 ### Thread safety
 
-    >>> import time
+All methods used to access and change a tracked structure are individually thread safe. In addition, a `with` block is thread safe as a whole, i.e. it will not be pre-empted by another thread.
+
+As a simple example, I will take a counter object:
+
     >>> counter = track({}, persist=False)
     
+... and an obviously poorly designed counter increment operation:
+    
+    >>> from time import sleep
     >>> def increment_counter():
     ...   previous_value = counter['value']
     ...   new_value = previous_value + 1
-    ...   time.sleep(.01)
+    ...   sleep(.01)   # Let other threads run
     ...   counter['value'] = new_value
+    
+Using this operation in separate threads produces undesirable results (`run_async` is a simple decorator that launches the decorated function in a new thread):
     
     >>> @run_async
     ... def increment_unsafe():
     ...   increment_counter()
     
-    >>> counter['value'] = 0
+    >>> counter.value = 0
     >>> c1 = increment_unsafe()
     >>> c2 = increment_unsafe()
     >>> c1.join() and c2.join()
-    >>> counter['value'] # 1 + 1 = 1?
+    >>> counter.value    # 1 + 1 = what?!
     1
+    
+If I instead use the context manager, we get the desired results:
     
     >>> @run_async
     ... def increment_safe():
-    ...   with counter:
+    ...   with counter:          # <-- This
     ...     increment_counter()
     
-    >>> counter['value'] = 0
+    >>> counter.value = 0
     >>> c1 = increment_safe()
     >>> c2 = increment_safe()
     >>> c1.join() and c2.join()
-    >>> counter['value'] # Back to regular math
+    >>> counter.value    # Back to regular math
     2
+    
+While this is nice, I do need to be careful not to put any long-running I/O in the `with` block, as the other threads will not be able to take advantage of the opportunity.
+
 
 ### Dot access
 
-As accessing dict items with the attribute-access-like dot notation 
+As accessing dict items with the attribute-access-like dot notation is not for eveyone (see [discussion](http://stackoverflow.com/questions/4984647/accessing-dict-keys-like-an-attribute-in-python)), you can turn the feature off, globally. This is done on class level, so you have to do it before starting to track a structure:
 
-http://stackoverflow.com/questions/4984647/accessing-dict-keys-like-an-attribute-in-python
+    >>> dot_off()
+    >>> vanilla_access = track({}, persist=False)
+    >>> vanilla_access['test'] = 'value'
+    >>> hasattr(vanilla_access, 'test')
+    False
+    
+To turn the dot access feature back on (you guessed it):
+
+    >>> dot_on()
+    
 
 ## Features
 
