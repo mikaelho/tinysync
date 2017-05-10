@@ -9,6 +9,7 @@ import dictdiffer
 import pprint
 import sys, io
 import importlib
+import threading
 
 from wrappers import *
 from persistence import *
@@ -19,11 +20,14 @@ class Handler(object):
   
   persistence_default = SafeYamlFile
   
-  def __init__(self, subject, name, persistence, callback, path_prefix):
-    #self.root = root # subject
+  def __init__(self, subject, name, persist, change_callback, conflict_callback, path_prefix):
+        
+    self.lock = threading.RLock()
+
     self.name = name
-    self.callback = callback
-    self.persistence = persistence
+    self.change_callback = change_callback
+    self.conflict_callback = conflict_callback
+    self.persist = persist
     self.path_prefix = path_prefix
     self.change_paths = ChangePathItem()
     self.save_changes = True
@@ -41,21 +45,20 @@ class Handler(object):
     self.make_updates(target)
     self.record_change_footprint(target._tracker.path)
     
-    if self.callback:
-      self.callback(change_data)
+    if self.change_callback:
+      self.change_callback(change_data)
     
-    if self.persistence is not None:
-      self.persistence.change_advisory(change_data)
+    if self.persist is not None:
+      self.persist.change_advisory(change_data)
       if self.save_changes: 
         self.save()
         
   def save(self):
-    if self.persistence is not None:
-      conflicts = self.persistence.dump(self.root)
-    
+    if self.persist is not None:
+      self.persist.dump(self.root, self, self.conflict_callback)
       
   def load(self, key, path):
-    value = self.persistence.load_specific(key)
+    value = self.persist.load_specific(key)
     tracked_value = self.start_to_track(value, path + [key])
     return tracked_value
     
@@ -143,6 +146,17 @@ class Handler(object):
     for key in path:
       current = self.get_value(current, key)
     return current
+    
+  def set(self, path, value):
+    assert isinstance(path, list)
+    if len(path) == 0:
+      raise ValueError('Empty path, cannot set root')
+    current = self.root
+    for key in path[:-1]:
+      current = self.get_value(current, key)
+    key = path[-1]
+    old_value = self.get_value(current, key)
+    self.set_value(current, path[-1], old_value, value)
       
   def record_change_footprint(self, change_path):
     change_id = str(uuid.uuid4())[-12:]
@@ -175,7 +189,7 @@ class ChangePathItem(dict):
 
 #def track(target, name='default', path=None, tracker=None, persist=None, callback=None):
   
-def track(target, name='default', persist=None, callback=None, path_prefix=None):
+def track(target, name='default', persist=None, change_callback=None, conflict_callback=None, path_prefix=None):
   """ Main function to start tracking changes to structures. 
   
   Give it a structure consisting of dicts, lists, sets and contained objects, and
@@ -186,7 +200,8 @@ def track(target, name='default', persist=None, callback=None, path_prefix=None)
   * `target`: The data structure to track.
   * `name`: Name is used for persistence, e.g. as the file name. It is also included in change notifications.
   * `persist`: Optional - Overrides class default persistence setting as defined by the `Tracker` class `default_persistence` attribute.
-  * `callback`: Optional - Function that is called every time the tracked structure is changed.
+  * `change_callback`: Optional - Function that is called every time the tracked structure is changed.
+  * `conflict_callback`: Optional - Function called to resolve conflicts between the latest changes and the persisted values.
   * `path_prefix`: Optional - Path prefix as a list of segments.
   """
   tracked = None
@@ -212,12 +227,22 @@ def track(target, name='default', persist=None, callback=None, path_prefix=None)
       target = loaded_target
       initial = False
   
-  handler = Handler(target, name, persistence, callback, path_prefix)
+  handler = Handler(target, name, persistence, change_callback, conflict_callback, path_prefix)
   
   if persistence is not None:
     persistence.dump(handler.root, initial=initial)
     
   return handler.root
+
+def configure(tracked_object, **kwargs):
+  if not istracked(tracked_object):
+    raise TypeError('Cannot configure a non-tracked object of type %s' % type(tracked_object))
+  handler = tracked_object._tracker.handler
+  for key in kwargs:
+    if hasattr(handler, key):
+      setattr(handler, key, kwargs[key])
+    else:
+      raise AttributeError('%s is not an available option to set' % key)
 
 def istracked(obj):
   return issubclass(type(obj), TrackerWrapper)

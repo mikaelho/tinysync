@@ -14,7 +14,7 @@ class Persistence():
   def change_advisory(self, change):
     """Information about a change."""
     
-  def dump(self, to_save, initial=False):
+  def dump(to_save, handler, conflict_callback, initial=False):
     """Persist the given structure.
     Initial save may be different in some cases.
     
@@ -51,7 +51,7 @@ class AbstractFile(Persistence):
     """
     return self.load()
     
-  def dump(self, to_save, initial=False):
+  def dump(self, to_save, handler=None, conflict_callback=None, initial=False):
     if self.testing:
       self.testing = io.StringIO()
       self.dumper(to_save, self.testing)
@@ -129,7 +129,7 @@ class JsonDBM(LazyPersistence):
   def load_specific(self, key):
     return json.loads(self.db[key].decode())
     
-  def dump(self, to_save, initial=False):
+  def dump(self, to_save, handler=None, conflict_callback=None, initial=False):
     assert hasattr(to_save, '__getitem__')
     if initial:
       self.changed_keys = (key for key in to_save)       
@@ -180,7 +180,7 @@ class CouchDB(Persistence):
     #del doc['_rev']
     #return doc
     
-  def dump(self, to_save, initial=False):
+  def dump(self, to_save, handler=None, conflict_callback=None, initial=False):
     assert hasattr(to_save, '__getitem__')
     conflicts = []
     if initial:
@@ -193,7 +193,7 @@ class CouchDB(Persistence):
         (_, rev) = self.db.save(doc)
         doc['_rev'] = rev
       except couchdb.ResourceException:
-        self.add_to_conflicts(conflicts, key)
+        self.handle_conflict(doc, conflict_callback)
     self.changed_keys = set()
     for key in self.deleted_keys:
       doc = to_save[key]
@@ -205,9 +205,14 @@ class CouchDB(Persistence):
     self.deleted_keys = set()
     return None if len(conflicts) == 0 else conflicts
     
-  def add_to_conflicts(self, conflicts, key):
-    updated_value = self.db[key]
-    conflicts.append((key, updated_value))
+  def handle_conflict(self, key, local_doc, conflict_callback):
+    remote_doc = self.db[key]
+    local_doc['_rev'] = remote_doc['_rev']
+    if conflict_callback and conflict_callback([key], local_doc, remote_doc):
+      # Local wins, may have been modified by the callback
+      self.db.save(local_doc)
+    else: # Remote wins
+      pass
       
   def clean(self):
     """ Convenience function that deletes the underlying CouchDB database. """

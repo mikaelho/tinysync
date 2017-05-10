@@ -3,9 +3,22 @@
 from proxies import ObjectWrapper
 from collections.abc import MutableSequence, MutableMapping, MutableSet
 from types import SimpleNamespace
+import functools
 
 from util import *
   
+def synchronized(func):
+  """ Decorator for making wrapper functions, i.e.
+  all access and updates, thread safe. """
+  @functools.wraps(func)
+  def _wrapper(self, *args, **kwargs):
+    handler = self._tracker.handler
+    if handler.lock:
+      with self._tracker.handler.lock:
+        return func(self, *args, **kwargs)
+    else:
+      return func(self, *args, **kwargs)
+  return _wrapper
 
 class TrackerWrapper(ObjectWrapper):
   
@@ -13,9 +26,7 @@ class TrackerWrapper(ObjectWrapper):
   
   def __init__(self, obj, path, handler):
     ObjectWrapper.__init__(self, obj)
-    
-    #handler = handler if handler else Handler(self, name, file, callback)
-    #path = path if path else []
+
     object.__setattr__(self, '_tracker', SimpleNamespace(handler=handler, path=path))
       
   def __deepcopy__(self, memo):
@@ -23,7 +34,7 @@ class TrackerWrapper(ObjectWrapper):
     
   def __enter__(self):
     """ Tracked objects are also context managers,
-    and can be used to manage performance and transactionality.
+    and can be used to manage performance and transactionality. They are also thread safe.
     
     All changes are persisted only on exiting the
     context manager: 
@@ -40,11 +51,17 @@ class TrackerWrapper(ObjectWrapper):
     ...   assert unchanged()
     >>> assert not unchanged()
     """
-    self._tracker.handler.save_changes = False
+    handler = self._tracker.handler
+    if handler.lock:
+      handler.lock.acquire()
+    handler.save_changes = False
     
   def __exit__(self, *exc):
-    self._tracker.handler.save()
-    self._tracker.handler.save_changes = True
+    handler = self._tracker.handler
+    handler.save()
+    handler.save_changes = True
+    if handler.lock:
+      handler.lock.release()
   
   def __repr__(self):
     return self.__subject__.__repr__()
@@ -66,6 +83,7 @@ class DictWrapper(TrackerWrapper):
   >>> del dct.b
   """
   
+  @synchronized
   def __getitem__(self, key):
     value = self.__subject__[key]
     if isinstance(value, LazyLoadMarker):
@@ -73,6 +91,7 @@ class DictWrapper(TrackerWrapper):
       self.__subject__[key] = value
     return value
   
+  @synchronized
   def __getattr__(self, key):
     if key in self:
       return self[key]
@@ -80,12 +99,14 @@ class DictWrapper(TrackerWrapper):
       return getattr(self.__subject__, key)
     raise AttributeError("'%s' object has no attribute '%s'" % (type(self).__name__, key))
     
+  @synchronized
   def __setattr__(self, key, value):
     if key in self:
       self[key] = value
     else:
       object.__setattr__(self, key, value)
-      
+   
+  @synchronized
   def __delattr__(self, key):
     if key in self:
       del self[key]
@@ -132,6 +153,7 @@ mutating_methods = {
 # Add tracking wrappers to all mutating functions
 for wrapper_type in mutating_methods:
   for func_name in mutating_methods[wrapper_type]:
+    @synchronized
     def func(self, *args, tracker_function_name=func_name, **kwargs):
       return_value = getattr(self.__subject__, tracker_function_name)(*args, **kwargs)
       self._tracker.handler.on_change(self, tracker_function_name, *args, **kwargs)

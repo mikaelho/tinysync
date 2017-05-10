@@ -4,9 +4,9 @@
 
 Sync Python dicts and other data structures to:
 
-1. File: Configuration files and similar
-2. DBM: Persisting larger data sets
-1. UI: Reacting to changes in data model
+1. [File](#sync-with-files): Configuration files and similar
+1. [UI](#sync-ui): Reacting to changes in the data model
+1. [Database](#sync-to-database): Persisting larger data sets
 1. Another device: Differential data synchronization
 
 ### Sync with files
@@ -60,34 +60,6 @@ Writing the whole structure to file after every change can become a performance 
 
 YAML, while very nice for human-readable files, can also be relatively slow. You can also save in JSON, non-safe YAML, pickle and shelve formats - see instructions and the fine print in the section [Persistence options].
 
-### Sync to database
-
-#### DBM
-
-If the data structure goes larger, performance suffers if I always serialize the whole structure to file. DBM-based option assumes that the root of the structure is a dict, and only saves the branch (key) that was changed. Also, the value of a specific key is only loaded when needed. Thus the performance is improved if you can divide your large data structure into sensible chunks, and especially if you typically only access and update some of the values.
-
-Of course, these optimizations are invisible to you as the user of the API:
-
-    >>> large = {
-    ...   'one branch': 'lots of data',
-    ...   'other branch': 'even more data'
-    ... }
-    >>> large = track(large, 'example-dbm', persist=JsonDBM)
-    >>> large['one branch'] # Lazily loaded
-    'lots of data'
-    >>> large['one branch'] = 'changed data' # Saved by specific key
-
-#### CouchDB
-
-If your data is a "JSON-compatible dict of dicts", you can use a real database like CouchDB for persistence.
-
-    >>> cdb = CouchDB('database_name', couchdb_url)
-    
-As a convenience method, this persistence option provides a clean-up function that can benused to delete the database:
-
-    >>> cdb.clean()
-    
-
 ### Sync UI
 
 You can use the tracked data structure as the model in the Model-View-Controller pattern, by giving `track` a callback function that is called and updates the user-visible UI View every time the data is changed.
@@ -106,7 +78,9 @@ And this 'View' callback, where the print statements update the 'UI':
     
 Given to the tracker (not bothering to save changes to file, in this example):
 
-    >>> user_dir = track(user_dir, 'user directory', callback=update_view, persist=False)
+    >>> user_dir = track(user_dir, 'user directory',
+    ...   change_callback=update_view, 
+    ...   persist=False)
 
 Now whenever a 'Controller' changes the 'Model', 'View' is automatically updated:
 
@@ -132,14 +106,95 @@ An example to illustrate what the target is:
     ...   'parents': {},
     ...   'siblings': []
     ... }
-    >>> family = track(family, callback=catcher.cb, persist=False)
+    >>> family = track(family, 
+    ...   change_callback=catcher.cb, 
+    ...   persist=False)
     >>> family.siblings.append('Brother')
     >>> catcher.target # is the list that was appended to
     ['Brother']
  
  Note that all of these elements are direct references; you need to deepcopy them if you want to retain an unmutable snapshot.
 
+### Sync to database
+
+tinysync supports the following key-value store persistence options:
+
+* [DBM](#dbm)
+* [CouchDB](#couchdb)
+* MongoDB
+* ReminderStore (on iOS)
+
+#### DBM
+
+If the data structure goes larger, performance suffers if I always serialize the whole structure to file. DBM-based option assumes that the root of the structure is a dict, and only saves the branch (key) that was changed. Also, the value of a specific key is only loaded when needed. Thus the performance is improved if you can divide your large data structure into sensible chunks, and especially if you typically only access and update some of the values.
+
+Of course, these optimizations are invisible to you as the user of the API:
+
+    >>> large = {
+    ...   'one branch': 'lots of data',
+    ...   'other branch': 'even more data'
+    ... }
+    >>> large = track(large, 'example-dbm', 
+    ...   persist=JsonDBM)
+    >>> large['one branch'] # Lazily loaded
+    'lots of data'
+    >>> large['one branch'] = 'changed data'
+    ... # Saved by specific key
+
+#### CouchDB
+
+If your data is a "JSON-compatible dict of dicts", you can use a real database like CouchDB for persistence.
+
+    >>> cdb = CouchDB('database_name', couchdb_url)
+    
+As a convenience method, this persistence option provides a clean-up function that can benused to delete the database:
+
+    >>> cdb.clean()
+
 ### Sync between devices
+
+
+## Fine print
+
+### Thread safety
+
+    >>> import time
+    >>> counter = track({}, persist=False)
+    
+    >>> def increment_counter():
+    ...   previous_value = counter['value']
+    ...   new_value = previous_value + 1
+    ...   time.sleep(.01)
+    ...   counter['value'] = new_value
+    
+    >>> @run_async
+    ... def increment_unsafe():
+    ...   increment_counter()
+    
+    >>> counter['value'] = 0
+    >>> c1 = increment_unsafe()
+    >>> c2 = increment_unsafe()
+    >>> c1.join() and c2.join()
+    >>> counter['value'] # 1 + 1 = 1?
+    1
+    
+    >>> @run_async
+    ... def increment_safe():
+    ...   with counter:
+    ...     increment_counter()
+    
+    >>> counter['value'] = 0
+    >>> c1 = increment_safe()
+    >>> c2 = increment_safe()
+    >>> c1.join() and c2.join()
+    >>> counter['value'] # Back to regular math
+    2
+
+### Dot access
+
+As accessing dict items with the attribute-access-like dot notation 
+
+http://stackoverflow.com/questions/4984647/accessing-dict-keys-like-an-attribute-in-python
 
 ## Features
 
@@ -158,7 +213,8 @@ An example to illustrate what the target is:
 ## Examples
     
     >>> lst = [1, 2]
-    >>> tracked_list = track(lst, persist=False, callback=catcher.cb)
+    >>> tracked_list = track(lst, persist=False, 
+    ...   change_callback=catcher.cb)
   
 catcher.cb is a test change callback which simply records the latest change information:
 
