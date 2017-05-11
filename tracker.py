@@ -19,8 +19,9 @@ from util import *
 class Handler(object):
   
   persistence_default = SafeYamlFile
+  dot_access_default = True
   
-  def __init__(self, subject, name, persist, change_callback, conflict_callback, path_prefix):
+  def __init__(self, subject, name, persist, change_callback, conflict_callback, path_prefix, dot_access):
         
     self.lock = threading.RLock()
 
@@ -31,6 +32,12 @@ class Handler(object):
     self.path_prefix = path_prefix
     self.change_paths = ChangePathItem()
     self.save_changes = True
+    
+    dot_access_on = dot_access if dot_access is not None else self.dot_access_default 
+    self.trackable_types = trackable_types.copy()
+    if dot_access_on:
+      self.trackable_types[MutableMapping] = DictWrapper_Dot
+
     self.root = self.start_to_track(subject, path_prefix)
  
   def on_change(self, target, func_name, *args, **kwargs):
@@ -68,9 +75,9 @@ class Handler(object):
     
     tracked = None
     
-    for abc in trackable_types:
+    for abc in self.trackable_types:
       if isinstance(target, abc):
-        tracked = trackable_types[abc](target, path, self)
+        tracked = self.trackable_types[abc](target, path, self)
         
     if tracked is None and hasattr(target, '__dict__'):
       tracked = CustomWrapper(target, path, self)
@@ -189,7 +196,7 @@ class ChangePathItem(dict):
 
 #def track(target, name='default', path=None, tracker=None, persist=None, callback=None):
   
-def track(target, name='default', persist=None, change_callback=None, conflict_callback=None, path_prefix=None):
+def track(target, name='default', persist=None, change_callback=None, conflict_callback=None, path_prefix=None, dot_access=None):
   """ Main function to start tracking changes to structures. 
   
   Give it a structure consisting of dicts, lists, sets and contained objects, and
@@ -203,6 +210,7 @@ def track(target, name='default', persist=None, change_callback=None, conflict_c
   * `change_callback`: Optional - Function that is called every time the tracked structure is changed.
   * `conflict_callback`: Optional - Function called to resolve conflicts between the latest changes and the persisted values.
   * `path_prefix`: Optional - Path prefix as a list of segments.
+  * `dot_access`: Optional - True or False to indicate whether you want this tracked structures dict values to be accessible with the attribute-like dot notation. Default is True unless changed globally by calling the `dot_off` function.
   """
   tracked = None
   persistence = None
@@ -227,7 +235,7 @@ def track(target, name='default', persist=None, change_callback=None, conflict_c
       target = loaded_target
       initial = False
   
-  handler = Handler(target, name, persistence, change_callback, conflict_callback, path_prefix)
+  handler = Handler(target, name, persistence, change_callback, conflict_callback, path_prefix, dot_access)
   
   if persistence is not None:
     persistence.dump(handler.root, initial=initial)
@@ -310,10 +318,12 @@ def revert(changes, target, in_place=False):
   return target
   
 def dot_off():
-  trackable_types[MutableMapping] = DictWrapper_Not
+  Handler.dot_access_default = False
+  #trackable_types[MutableMapping] = DictWrapper_Not
   
 def dot_on():
-  trackable_types[MutableMapping] = DictWrapper_Dot
+  Handler.dot_access_default = True
+  #trackable_types[MutableMapping] = DictWrapper_Dot
 
 if __name__ == '__main__':
   

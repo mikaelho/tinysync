@@ -226,6 +226,14 @@ To turn the dot access feature back on (you guessed it):
 
     >>> dot_on()
     
+If you like dot access in general but have a specific case where it is problematic - e.g. a conflict with another package - you can turn it off for a single structure:
+
+    >>> special_case = track({}, persist=False,
+    ...   dot_access=False)
+    >>> special_case['test'] = 'value'
+    >>> hasattr(special_case, 'test')
+    False
+    
 
 ## Features
 
