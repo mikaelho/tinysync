@@ -125,8 +125,8 @@ tinysync supports the following key-value store persistence options:
 
 * [DBM](#dbm)
 * [CouchDB](#couchdb)
-* MongoDB
-* ReminderStore (on iOS)
+* TBC: MongoDB
+* TBC: ReminderStore (on iOS)
 
 #### DBM
 
@@ -147,13 +147,19 @@ Of course, these optimizations are invisible to you as the user of the API:
 
 #### CouchDB
 
-If your data is a "JSON-compatible dict of dicts", you can use a real database like CouchDB for persistence.
+If your data is a "JSON-compatible dict of dicts", you can use [CouchDB](http://couchdb.apache.org) for persistence. All you need to do to get your structure saved to the cloud is to get account info from a small-use-is-free service like [Cloudant](https://cloudant.com).
 
     >>> cdb = CouchDB('database_name', couchdb_url)
     
-As a convenience method, this persistence option provides a clean-up function that can benused to delete the database:
+If you leave`couchdb_url` out, connection is made to the CouchDB standard `localhost:5984`. Otherwise, your URL should look like this: `https://username:password@host:port/`.
+
+* Leave it out
+    
+As a convenience method, a clean-up function is available to delete the database:
 
     >>> cdb.clean()
+    
+You can also access all the [couchdb-python](https://pythonhosted.org/CouchDB/client.html#database) functionality through the `cdb.db` attribute that gives you the `couchdb.Database` object.
 
 ### Sync between devices
 
@@ -235,7 +241,7 @@ If you like dot access in general but have a specific case where it is problemat
     False
     
 
-## Features
+## Feature summary
 
 * Understands and wraps lists (MutableSequence), dicts (MutableMapping) and sets (MutableSet).
 * Detects and reports changes to any part of the structure.
