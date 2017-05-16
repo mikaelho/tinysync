@@ -153,7 +153,7 @@ If your data is a "JSON-compatible dict of dicts", you can use [CouchDB](http://
     
 If you leave`couchdb_url` out, connection is made to the CouchDB standard `localhost:5984`. Otherwise, your URL should look like this: `https://username:password@host:port/`.
 
-* Leave it out
+Usage of this persistence option is 
     
 As a convenience method, a clean-up function is available to delete the database:
 
