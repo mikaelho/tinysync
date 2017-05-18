@@ -5,18 +5,61 @@ from types import SimpleNamespace
 import copy
 import itertools
 import uuid
-import dictdiffer
 import pprint
 import sys, io
 import importlib
 import threading
 
+import dictdiffer
+
 from wrappers import *
 from persistence import *
 from util import *
 
+
+class HandlerProxy():
+  """ Object returned by the `handler` function.
+  Provides restricted access to key handler properties. """
+  def __init__(self, tracked_object):
+    self.handler = tracked_object._tracker.handler
+  
+  @property # read only
+  def name(self):
+    return self.handler.name
+        
+  @property
+  def persist(self):
+    return self.handler.persist
+        
+  @persist.setter
+  def persist(self, value):
+    self.handler.persist = value
     
-class Handler(object):
+  @property
+  def change_callback(self):
+    return self.handler.change_callback
+        
+  @change_callback.setter
+  def change_callback(self, value):
+    self.handler.change_callback = value
+    
+  @property
+  def conflict_callback(self):
+    return self.handler.conflict_callback
+        
+  @conflict_callback.setter
+  def conflict_callback(self, value):
+    self.handler.conflict_callback = value
+    
+  @property
+  def save_changes(self):
+    return self.handler.save_changes
+        
+  @save_changes.setter
+  def save_changes(self, value):
+    self.handler.save_changes = value
+    
+class Handler():
   
   persistence_default = SafeYamlFile
   dot_access_default = True
@@ -32,6 +75,7 @@ class Handler(object):
     self.path_prefix = path_prefix
     self.change_paths = ChangePathItem()
     self.save_changes = True
+    self.track = True
     
     dot_access_on = dot_access if dot_access is not None else self.dot_access_default 
     self.trackable_types = trackable_types.copy()
@@ -41,6 +85,7 @@ class Handler(object):
     self.root = self.start_to_track(subject, path_prefix)
  
   def on_change(self, target, func_name, *args, **kwargs):
+    
     change_data = SimpleNamespace(
       name=self.name,
       root=self.root,
@@ -50,6 +95,8 @@ class Handler(object):
     )
       
     self.make_updates(target)
+    
+    if not self.track: return
     self.record_change_footprint(target._tracker.path)
     
     if self.change_callback:
@@ -242,7 +289,25 @@ def track(target, name='default', persist=None, change_callback=None, conflict_c
     
   return handler.root
 
-def configure(tracked_object, **kwargs):
+def handler(tracked_object):
+  """ Returns a handler object for the tracked 
+  object given as a parameter.
+  
+  Handler can be used to access and change key
+  configuration parameters of the tracker:
+    
+  * name (read-only)
+  * persist
+  * change_callback
+  * conflict_callback
+  * save_changes
+  """
+  
+  if not istracked(tracked_object):
+    raise TypeError('Cannot return a handler for non-tracked object of type %s' % type(tracked_object))
+  return HandlerProxy(tracked_object)
+
+def config(tracked_object, **kwargs):
   if not istracked(tracked_object):
     raise TypeError('Cannot configure a non-tracked object of type %s' % type(tracked_object))
   handler = tracked_object._tracker.handler
@@ -342,7 +407,7 @@ if __name__ == '__main__':
   
   doctest.testmod(extraglobs=extraglobs)
   extraglobs.update(importlib.import_module('tracker').__dict__)
-  extraglobs.update(track({}, 'couchdb-conf'))
+  CouchDB.server_address = track({}, 'couchdb-conf').couchdb_url
   
   doctest.testfile('README.md', extraglobs=extraglobs)
   

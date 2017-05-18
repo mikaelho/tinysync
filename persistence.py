@@ -1,7 +1,24 @@
 import json
 import importlib
+from collections.abc import MutableMapping
+from contextlib import contextmanager
+from copy import deepcopy
 
 from util import *
+
+@contextmanager
+def do_not_track(obj):
+  previous_value = obj._tracker.handler.track
+  obj._tracker.handler.track = False
+  yield
+  obj._tracker.handler.track = previous_value
+  
+@contextmanager
+def do_not_save(obj):
+  previous_value = obj._tracker.handler.save_changes
+  obj._tracker.handler.save_changes = False
+  yield
+  obj._tracker.handler.save_changes = previous_value
 
 class Persistence():
   
@@ -141,29 +158,45 @@ class JsonDBM(LazyPersistence):
     self.deleted_keys = set()
     
     
-class CouchDB(Persistence):
+class CouchDB(LazyPersistence):
   """ Save structure to CouchDB, or a variant
   like Cloudant.
   Root must be a dict, likewise the elements 
   contained in the root dict, which are further 
-  polluted by CouchDB _id and _rev elements
+  polluted by CouchDB `_id` and `_rev` elements
   (where _id == key in the root dict).
   """
   
-  def __init__(self, database_name, url=None):
+  server_address = None
+  
+  def __init__(self, database_url):
+    """ Initializes a CouchDB persistence provider, with the assumption that one provider corresponds to one CouchDB database and one Python data structure.
+    
+    Parameters:
+      
+      * `database` parameter is either:
+        * a plain CouchDB database name
+        * a url that starts  with 'http' and includes the database name, e.g.: https://username:password@accountname.server.net/database.
+          
+    If only the database name is defined, connection is made to the default 'localhost:5984' with no authentication. If only database name is defined and the class-level `url` attribute is also defined, the two are combined.
+    """
+    
     super().__init__()
     globals()['couchdb'] = importlib.import_module('couchdb')
     
-    self.name = database_name
+    if not database_url.startswith('http') and self.server_address is not None:
+      import urllib.parse
+      database_url = urllib.parse.urljoin(self.server_address, database_url)
+      
+    self.name = database_url.split('/')[-1]
+    server_url = database_url[:-len(self.name)]
     
-    if url is None:
-      self.server = couchdb.Server()
-    else:
-      self.server = couchdb.Server(url)
+    self.server = couchdb.Server(couchdb.client.DEFAULT_BASE_URL if server_url == '' else server_url)
+      
     try:
-      self.db = self.server[database_name]
+      self.db = self.server[self.name]
     except couchdb.http.ResourceNotFound:
-      self.db = self.server.create(database_name)
+      self.db = self.server.create(self.name)
     
   def load(self):
     if len(self.db) == 0:
@@ -182,37 +215,40 @@ class CouchDB(Persistence):
     
   def dump(self, to_save, handler=None, conflict_callback=None, initial=False):
     assert hasattr(to_save, '__getitem__')
-    conflicts = []
-    if initial:
-      self.changed_keys = (key for key in to_save)       
-    for key in self.changed_keys:
-      doc = to_save[key]
-      assert isinstance(doc, MutableMapping)
-      doc['_id'] = key
-      try:
-        (_, rev) = self.db.save(doc)
-        doc['_rev'] = rev
-      except couchdb.ResourceException:
-        self.handle_conflict(doc, conflict_callback)
-    self.changed_keys = set()
-    for key in self.deleted_keys:
-      doc = to_save[key]
-      doc['_id'] = key
-      try:
-        self.db.delete(key)
-      except couchdb.ResourceException:
-        return self.add_to_conflicts(conflicts, key)
-    self.deleted_keys = set()
-    return None if len(conflicts) == 0 else conflicts
     
-  def handle_conflict(self, key, local_doc, conflict_callback):
+    # Must not trigger new saves to remote
+    with do_not_save(to_save):
+      conflicts = []
+      if initial:
+        self.changed_keys = (key for key in to_save)       
+      for key in self.changed_keys:
+        doc = to_save[key]
+        assert isinstance(doc, MutableMapping)
+        with do_not_track(to_save):
+          doc['_id'] = key
+          try:
+            (_, rev) = self.db.save(deepcopy(doc))
+            doc['_rev'] = rev
+          except couchdb.ResourceConflict:
+            self.handle_conflict(to_save, key, doc, conflict_callback)
+      self.changed_keys = set()
+      for key in self.deleted_keys:
+        doc = to_save[key]
+        doc['_id'] = key
+        try:
+          self.db.delete(key)
+        except couchdb.ResourceConflict:
+          return self.add_to_conflicts(conflicts, key)
+      self.deleted_keys = set()
+    
+  def handle_conflict(self, to_save, key, local_doc, conflict_callback):
     remote_doc = self.db[key]
     local_doc['_rev'] = remote_doc['_rev']
     if conflict_callback and conflict_callback([key], local_doc, remote_doc):
       # Local wins, may have been modified by the callback
       self.db.save(local_doc)
     else: # Remote wins
-      pass
+      to_save[key] = remote_doc
       
   def clean(self):
     """ Convenience function that deletes the underlying CouchDB database. """

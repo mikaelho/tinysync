@@ -149,17 +149,46 @@ Of course, these optimizations are invisible to you as the user of the API:
 
 If your data is a "JSON-compatible dict of dicts", you can use [CouchDB](http://couchdb.apache.org) for persistence. All you need to do to get your structure saved to the cloud is to get account info from a small-use-is-free service like [Cloudant](https://cloudant.com).
 
-    >>> cdb = CouchDB('database_name', couchdb_url)
+    >>> my_device = track({}, 'tinysync_demo', persist=CouchDB)
     
-If you leave`couchdb_url` out, connection is made to the CouchDB standard `localhost:5984`. Otherwise, your URL should look like this: `https://username:password@host:port/`.
+CouchDB needs a server address and a database name. These can be provided as a full url to `track`, including the database name as well, i.e. 'https://username:password@host:port/database_name'. Or give just the database name to `track`, like in the example above, and provide the server address in one of the following ways, in the order of precedence:
 
-Usage of this persistence option is 
-    
-As a convenience method, a clean-up function is available to delete the database:
+1. Class attribute `CouchDB.server_address`
+2. Environment variable `COUCHDB_URL`
+3. Or rely on the non-authenticated CouchDB standard `localhost:5984`.
 
-    >>> cdb.clean()
+couchdb-python is a synchronous library, which means that you need to have a network vonnection, and network delays will slow down your code.
+
+First "level" of your data structure must be dicts, as these correspond to the documents that CouchDB expecta to see. These dicts will get "polluted" by the CouchDB standard metadata elements, _id and _rev.
+
+    >>> my_device.one = { 'data': 'first version' }
+    >>> my_device.one._id
+    'one'
+
+If the database is used by others, their updates may cause per-document conflicts, which are by default resolved in the favor of the version on the server. To demonstrate this, we have someone else coming in and messing with our data:
+
+    >>> other_device = track({}, 'tinysync_demo', persist=CouchDB)
+    >>> other_device.one.data = 'second version'
     
-You can also access all the [couchdb-python](https://pythonhosted.org/CouchDB/client.html#database) functionality through the `cdb.db` attribute that gives you the `couchdb.Database` object.
+Now if I try to update the same bit, I will have no impact, toting my outdated data:
+
+    >>> my_device.one.data = 'third version'
+    >>> my_device.one.data  # The other guy wins
+    'second version'
+
+But now I am in the know again, and my next update works just fine:
+
+    >>> my_device.one.data = 'third version'
+    >>> my_device.one.data
+    'third version'
+
+As a convenience method, a clean-up function is available to delete the database. If you need more fine-grained control, you can access the underlying couchdb-python [Database object](https://pythonhosted.org/CouchDB/client.html#database).
+
+    >>> cdb = handler(struct).persist
+    >>> cdb.db.name
+    'tinysync_demo'
+    >>> cdb.clean() # Delete the database
+
 
 ### Sync between devices
 
