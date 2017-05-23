@@ -76,7 +76,8 @@ class DictWrapper_Dot(DictWrapper):
   support attribute-like access to items, if the 
   item keys are valid attribute names.
   
-  >>> dct = track({'a': 1, 'b': {'c': 2}}, persist=False, callback=catcher.cb)
+  >>> dct = track({'a': 1, 'b': {'c': 2}}, 
+  ...   callback=catcher.cb)
   >>> dct.a
   1
   >>> dct.b.c
@@ -134,7 +135,8 @@ class CustomWrapper(TrackerWrapper):
   we track attribute changes.
   
   >>> custom_object = SimpleNamespace(a=1)
-  >>> tracked_object = track(custom_object, persist=False, callback=catcher.cb)
+  >>> tracked_object = track(custom_object, 
+  ...   callback=catcher.cb)
   >>> tracked_object.a = 'new value'
   >>> catcher.target.a
   'new value'

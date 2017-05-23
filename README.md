@@ -1,11 +1,21 @@
 # tinysync
 
-## Use Cases
+Magic syncing of Python data structures
 
-Sync Python dicts and other data structures with:
+## Quick Start
 
-1. [Files](#sync-with-files): Configuration files and similar
-1. [UI](#sync-ui): Reacting to changes in the data model
+If I take a data structure like:
+
+    >>> data = {'my': ['data', 'structure']}
+    
+I can track it simply with:
+
+    >>> data = track(data)
+    
+So what can I do with tracked data?
+
+1. If I give it a name, every change gets synced to a [file](#sync-with-files) by the same name. This is handy for configuration files or similar.
+1. If I give it a callback, I can update the [UI](#sync-ui) every time my data changes.
 1. [Databases](#sync-to-database): Persisting larger data sets
 1. Other devices: Differential data synchronization
 
@@ -80,11 +90,10 @@ And this 'View' callback, where the print statements update the 'UI':
     ...   if change.path == ['admins']:
     ...     print('Number of admins:', len(change.target))
     
-Given to the tracker (not bothering to save changes to file, in this example):
+Given to the tracker:
 
-    >>> user_dir = track(user_dir, 'user directory',
-    ...   change_callback=update_view, 
-    ...   persist=False)
+    >>> user_dir = track(user_dir,
+    ...   change_callback=update_view)
 
 Now whenever a 'Controller' changes the 'Model', 'View' is automatically updated:
 
@@ -98,7 +107,7 @@ Now whenever a 'Controller' changes the 'Model', 'View' is automatically updated
 Here are information elements provided as attributes of the single change callback argument:
 
 * root: The object reference you gave to the `track` function.
-* name: Name you gave to the `track` function.
+* name: Name you gave to the `track` function, or "<No name - no persistence>" if no name was given.
 * path: Path from the root of the structure to the changed part, as a list. Empty list means the root has changed. Might not correspond to the actual path used in code if your structure is not a tree.
 * func_name: Name of the function used to modify the structure (`__setitem__`, `append`, etc.)
 * args and kwargs: Function arguments.
@@ -111,8 +120,7 @@ An example to illustrate what the target is:
     ...   'siblings': []
     ... }
     >>> family = track(family, 
-    ...   change_callback=catcher.cb, 
-    ...   persist=False)
+    ...   change_callback=catcher.cb)
     >>> family.siblings.append('Brother')
     >>> catcher.target # is the list that was appended to
     ['Brother']
@@ -159,7 +167,7 @@ CouchDB needs a server address and a database name. These can be provided as a f
 
 couchdb-python is a synchronous library, which means that you need to have a network vonnection, and network delays will slow down your code.
 
-First "level" of your data structure must be dicts, as these correspond to the documents that CouchDB expecta to see. These dicts will get "polluted" by the CouchDB standard metadata elements, _id and _rev.
+First "level" of your data structure must be dicts, as these correspond to the documents that CouchDB expects to see. These dicts will get "polluted" by the CouchDB standard metadata elements, _id and _rev.
 
     >>> my_device.one = { 'data': 'first version' }
     >>> my_device.one._id
@@ -170,7 +178,7 @@ If the database is used by others, their updates may cause per-document conflict
     >>> other_device = track({}, 'tinysync_demo', persist=CouchDB)
     >>> other_device.one.data = 'second version'
     
-Now if I try to update the same bit, I will have no impact, toting my outdated data:
+Now if I try to update the same bit, I will have no impact, going about with my outdated data:
 
     >>> my_device.one.data = 'third version'
     >>> my_device.one.data  # The other guy wins
@@ -184,7 +192,7 @@ But now I am in the know again, and my next update works just fine:
 
 As a convenience method, a clean-up function is available to delete the database. If you need more fine-grained control, you can access the underlying couchdb-python [Database object](https://pythonhosted.org/CouchDB/client.html#database).
 
-    >>> cdb = handler(struct).persist
+    >>> cdb = handler(my_device).persist
     >>> cdb.db.name
     'tinysync_demo'
     >>> cdb.clean() # Delete the database

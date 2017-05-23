@@ -240,10 +240,13 @@ class TrackerData():
 class ChangePathItem(dict):
   """ Class to enable adding a change ID to change path items. """
   
+class NoNameNoPersistence():
+  def __str__(self):
+    return '<No name - no persistence>'
 
 #def track(target, name='default', path=None, tracker=None, persist=None, callback=None):
   
-def track(target, name='default', persist=None, change_callback=None, conflict_callback=None, path_prefix=None, dot_access=None):
+def track(target, name=NoNameNoPersistence(), persist=None, change_callback=None, conflict_callback=None, path_prefix=None, dot_access=None):
   """ Main function to start tracking changes to structures. 
   
   Give it a structure consisting of dicts, lists, sets and contained objects, and
@@ -266,7 +269,7 @@ def track(target, name='default', persist=None, change_callback=None, conflict_c
   if istracked(target):
     return target
     
-  if persist is not False:
+  if not isinstance(name, NoNameNoPersistence) and persist is not False:
     if persist is not None and persist is not True:
       if isinstance(persist, Persistence):
         persistence = persist
