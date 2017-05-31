@@ -178,22 +178,40 @@ If the database is used by others, their updates may cause per-document conflict
     >>> other_device = track({}, 'tinysync_demo', persist=CouchDB)
     >>> other_device.one.data = 'second version'
     
-Now if I try to update the same bit, I will have no impact, going about with my outdated data:
+Now if I try to update the same bit, I will have no impact, going about with my outdated data. I will first set up a callback to changes due to remote changes.
+
+    >>> my_device_handler = handler(my_device)
+    >>> def conflict(change_spec):
+    ...   print('Conflict', change_spec)
+    >>> my_device_handler.conflict_callback = conflict
+    
+Then we cause a conflict:
 
     >>> my_device.one.data = 'third version'
     >>> my_device.one.data  # The other guy wins
     'second version'
 
-But now I am in the know again, and my next update works just fine:
+This is the first part of the default conflict resolution strategy, "remote wins".
+
+If I try again, I am aligned with the server version, and my next update works just fine:
 
     >>> my_device.one.data = 'third version'
     >>> my_device.one.data
     'third version'
 
-As a convenience method, a clean-up function is available to delete the database. If you need more fine-grained control, you can access the underlying couchdb-python [Database object](https://pythonhosted.org/CouchDB/client.html#database).
+The second part of the default conflict resolution strategy is "try to fix". This means that if there is a way to apply the local change in a way that could have resulted in the same end result at the remote, we merge the two changes and apply them without fuss.
 
-    >>> cdb = handler(my_device).persist
-    >>> cdb.db.name
+    >>> eprint('eka')
+    >>> other_device.two = {'branch_one': 'their value'}
+    >>> eprint('toka')
+    >>> my_device.two = {'branch_two': 'my value'}
+    >>> my_device.two #doctest: +ELLIPSIS
+    {'_id': 'two', '_rev': '2-...', 'branch_one': 'their value', 'branch_two': 'my value'}
+
+As a convenience method, a clean-up function is available to delete the database. Also, if you need more fine-grained control, you can access the underlying couchdb-python [Database object](https://pythonhosted.org/CouchDB/client.html#database).
+
+    >>> cdb = my_device_handler.persist
+    >>> cdb.db.name # couchdb.client.Database method
     'tinysync_demo'
     >>> cdb.clean() # Delete the database
 
@@ -251,9 +269,6 @@ If I instead use the context manager, we get the desired results:
     >>> c1.join() and c2.join()
     >>> counter.value    # Back to regular math
     2
-    
-While this is nice, I do need to be careful not to put any long-running I/O in the `with` block, as the other threads will not be able to take advantage of the opportunity.
-
 
 ### Dot access
 

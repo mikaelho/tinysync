@@ -4,6 +4,8 @@ from collections.abc import MutableMapping
 from contextlib import contextmanager
 from copy import deepcopy
 
+import dictdiffer
+
 from util import *
 
 @contextmanager
@@ -197,6 +199,8 @@ class CouchDB(LazyPersistence):
       self.db = self.server[self.name]
     except couchdb.http.ResourceNotFound:
       self.db = self.server.create(self.name)
+      
+    self.last_known_good = {}
     
   def load(self):
     if len(self.db) == 0:
@@ -207,7 +211,9 @@ class CouchDB(LazyPersistence):
     return return_value
     
   def load_specific(self, key):
-    return self.db[key]
+    loaded = dict(self.db[key])
+    self.last_known_good[key] = loaded
+    return loaded
     #del doc['_id']
     #self.revs[key] = doc['_rev']
     #del doc['_rev']
@@ -216,21 +222,23 @@ class CouchDB(LazyPersistence):
   def dump(self, to_save, handler=None, conflict_callback=None, initial=False):
     assert hasattr(to_save, '__getitem__')
     
+    eprint('changed', self.changed_keys)
     # Must not trigger new saves to remote
     with do_not_save(to_save):
       conflicts = []
       if initial:
         self.changed_keys = (key for key in to_save)       
       for key in self.changed_keys:
+        eprint('saving', key)
         doc = to_save[key]
         assert isinstance(doc, MutableMapping)
-        with do_not_track(to_save):
-          doc['_id'] = key
-          try:
+        try:
+          with do_not_track(to_save):
+            doc['_id'] = key
             (_, rev) = self.db.save(deepcopy(doc))
             doc['_rev'] = rev
-          except couchdb.ResourceConflict:
-            self.handle_conflict(to_save, key, doc, conflict_callback)
+        except couchdb.ResourceConflict:
+          self.handle_conflict(to_save, key, doc, conflict_callback)
       self.changed_keys = set()
       for key in self.deleted_keys:
         doc = to_save[key]
@@ -242,12 +250,32 @@ class CouchDB(LazyPersistence):
       self.deleted_keys = set()
     
   def handle_conflict(self, to_save, key, local_doc, conflict_callback):
-    remote_doc = self.db[key]
-    local_doc['_rev'] = remote_doc['_rev']
-    if conflict_callback and conflict_callback([key], local_doc, remote_doc):
-      # Local wins, may have been modified by the callback
-      self.db.save(local_doc)
-    else: # Remote wins
+    last_good = self.last_known_good.get(key, {})
+    remote_doc = self.load_specific(key)
+    last_rev = remote_doc.pop('_rev')
+    with do_not_track(to_save):
+      local_doc.pop('_rev', None)
+    
+    remote_diff = list(dictdiffer.diff(last_good, remote_doc))
+    local_diff = list(dictdiffer.diff(last_good, local_doc))
+    
+    one_way = dictdiffer.patch(remote_diff, last_good)
+    one_way = dictdiffer.patch(local_diff, one_way)
+    
+    other_way = dictdiffer.patch(local_diff, last_good)
+    other_way = dictdiffer.patch(remote_diff, other_way)
+    
+    eprint(one_way, other_way)
+    
+    if one_way == other_way:
+      eprint('resolved')
+      one_way['_rev'] = last_rev
+      self.db.save(one_way)
+      with do_not_track(to_save):
+        to_save[key] = one_way
+    else:
+      eprint('no resolve')
+      remote_doc['_rev'] = last_rev
       to_save[key] = remote_doc
       
   def clean(self):

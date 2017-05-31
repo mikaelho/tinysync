@@ -86,6 +86,8 @@ class Handler():
  
   def on_change(self, target, func_name, *args, **kwargs):
     
+    eprint('on vhange', args, self.track)
+    
     change_data = SimpleNamespace(
       name=self.name,
       root=self.root,
