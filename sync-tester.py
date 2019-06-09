@@ -1,3 +1,5 @@
+import tinysync
+
 # coding: utf-8
 import random
 import json
@@ -11,16 +13,14 @@ from decimal import Decimal
 from datetime import datetime
 import console
 
-server = tinysync.logic.ServerConnectivity()
-
-db_ids = ('1','2', '3')
-dbs = []
-for db_id in db_ids:
-  #db = tinysync.TinySyncDB('test' + db_id + '.json', server = server)
+data_ids = ('A','B', 'C')
+datas = []
+for data_id in data_ids:
   db = tinysync.TinySyncDB(server = server)
   db.name = 'db' + db_id
   db.purge_table('_default')
   dbs.append(db)
+  data = ...
 
 fake = faker.Faker()
 #fakers = (fake.pystr, fake.pydict, fake.pyint, fake.pyfloat, fake.pylist)
@@ -110,15 +110,3 @@ for db in dbs:
 for db in dbs:
   print(db.name + ' ' + str(db.all()))
 
-#print(list(dbs[0].all()[0].keys()))
-#print(list(dbs[1].all()[0].keys()))
-#print(list(dbs[2].all()[0].keys()))
-#print(len(dbs[1].all()))
-#print(len(dbs[2].all()))
-
-
-#print(list(dictdiffer.diff(dbs[0].all(), dbs[1].all())))
-'''
-print(list(dictdiffer.diff(dbs[0].all(), dbs[2].all())))
-#print(list(dictdiffer.diff(dbs[1].all(), dbs[2].all())))
-'''

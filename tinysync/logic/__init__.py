@@ -9,7 +9,7 @@ import hashlib
 import uuid
 
 def p(dict_obj):
-  print json.dumps(dict_obj, indent=2)
+  print(json.dumps(dict_obj, indent=2))
 
 def diff(first, second):
   return copy.deepcopy(list(dictdiffer.diff(first, second)))
@@ -66,7 +66,7 @@ class Client():
     reply = self.server_connectivity.sync_up(self.version, version_diff, self.client_id, generate_checksum(self.prev_value))
     
     if reply['status'] == 'ok':
-      print 'ok ',
+      print('ok ', end=' ')
       self.version = reply['version']
       self.prev_value = current_value
       #assert match(version_diff, self.server_connectivity.server.diffs[-1])
@@ -74,7 +74,7 @@ class Client():
       #assert server_version + 1 == self.server_connectivity.server.version
     
     elif reply['status'] == 'merged':
-      print 'merged ',
+      print('merged ', end=' ')
       self.prev_value = patch(reply['diffs'], current_value)
       self.version = reply['version']
       #assert match(version_diff, self.server_connectivity.server.diffs[-1])
@@ -82,15 +82,15 @@ class Client():
       #assert server_version + 1 == self.server_connectivity.server.version
     
     elif reply['status'] == 'conflict':
-      print 'conflict ',
+      print('conflict ', end=' ')
       try:
         self.prev_value = patch(reply['diffs'], self.prev_value)
         self.version = reply['version']
       except Exception as e:
-        print 'Error patching client to match server'
-        print '* previous client value:'
+        print('Error patching client to match server')
+        print('* previous client value:')
         p(self.prev_value)
-        print '* diffs:'
+        print('* diffs:')
         p(reply['diffs'])
         #self.server_connectivity.compare_diffs(reply['diffs'])
         raise e
@@ -148,6 +148,8 @@ class Server():
     #try:
     if 'put' in client_input:
       reply = self.handle_request(client_input['put'])
+    else:
+      print('Unknown client request')
     #except Exception as e:
       #reply = {
        # 'status': 'error',
@@ -270,6 +272,7 @@ class FileBasedServer():
   pass
   
 def generate_checksum(data):
-  ''' Returns a hash of the JSON-serializable paraneter '''
+  ''' Returns a hash of the JSON-serializable parameter '''
   string_data = json.dumps(data, sort_keys=True)
-  return hashlib.md5(string_data).hexdigest()
+  return hashlib.md5(string_data.encode()).hexdigest()
+
