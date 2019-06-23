@@ -14,6 +14,7 @@ class MemoryConduit:
     self.locals = {}
     self.remotes = {}
     self.up = {}
+    self.down = {}
   
   def register_handler(self, handler):
     self.locals[handler.data_id] = handler
@@ -23,16 +24,27 @@ class MemoryConduit:
     
   def register_remote_handler(self, node_id, data_id):
     remote_handlers = self.remotes.setdefault(data_id, set())
+    #print(remote_handlers)
     if node_id not in remote_handlers:
       remote_handlers.add(node_id)
-      for id in sorted(remote_handlers):
-        if id > self.node_id:
-          self.up[data_id] = id
-          break
-      else:
-        self.up[data_id] = None
       if data_id in self.locals:
         self.nodes[node_id].register_remote_handler(self.node_id, data_id)
+    for id in sorted(remote_handlers):
+      if id > self.node_id:
+        self.up[data_id] = id
+        break
+    else:
+      self.up[data_id] = None
+    for id in sorted(remote_handlers, reverse=True):
+      if id < self.node_id:
+        self.down[data_id] = id
+        break
+    else:
+      self.down[data_id] = None
+      
+  def peers_down(self, handler):
+    down = self.down[handler.data_id]
+    return [] if down is None else [down]
       
   def broadcast(self, handler, message):
     for node in self.nodes.values():

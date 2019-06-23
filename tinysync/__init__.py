@@ -17,7 +17,6 @@ from tinysync.persistence import *
 from tinysync.util import *
 from tinysync.sync import *
 
-
 class HandlerProxy():
   """ Object returned by the `handler` function.
   Provides restricted access to key handler properties. """
