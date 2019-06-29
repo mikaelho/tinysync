@@ -1,257 +1,270 @@
-import copy
+'''
+Differential synchronization of Python dict/list data structures
+
+Peer-to-peer implementation of the algorithm described at:
+https://neil.fraser.name/writing/sync/
+'''
+
+#TODO: Features to implement
+# Disaster branch
+
+import copy, itertools, uuid
 import dictdiffer
 
 class Sync:
   
-  default_init_func = list
-  
-  def __init__(self, content, data_id, conduit, change_callback=None, init_func=None):
-    self.content = content
+  def __init__(self,
+  initial_value, content=None, 
+  data_id='default', conduit=None, 
+  change_callback=None):
+    self.initial_value = initial_value
+    self.content = content or copy.deepcopy(self.initial_value)
     self.data_id = data_id
-    self.conduit = conduit
+    self.conduit = conduit or MemoryConduit()
     self.change_callback = change_callback
-    self.init_func = init_func or self.default_init_func
-    conduit.register_handler(self)
+
+    self.conduit.register_handler(self)
+    
+    self.content_shadow = {}
+    self.shadow_backup = {}
+    self.edit_chain_local = {}
+    self.version_local = {}
+    self.version_other = {}
+    self.backup_version_local = {}
+    self.backup_version_other = {}
+    
+    '''
     # Upwards
-    self.prev_content = None
+    self.prev_content = self.init_func()
     self.my_version_up = 0
     # Downwards
     self.prev_content_down = {}
     self.my_version_down = {}
     self.version_from_below = {}
     #self.client_version = {}
+    '''
    
   @staticmethod 
   def _generate_checksum(data):
     ''' Returns a hash of the JSON-serializable parameter '''
     string_data = json.dumps(data, sort_keys=True)
     return hashlib.md5(string_data.encode()).hexdigest()
-    
+   
+  ''' 
   def update_local(self):
     self.update_up()
     self.update_down()
+  '''
     
-  def receive_message(self, sync_id, message):
-    switch = {
-      'update up': self.update_from_below,
-      'update down': self.update_from_above
-    }
-    switch[message['action']](sync_id, message)
+  def receive_message(self, source_id, message):
+    self.remote_update(source_id, message, 
+      message.get('upwards', False))
+    
+  def update_others(self):
+    self.update_up()
+    self.update_down()
+    if self.change_callback is not None:
+      self.change_callback()
     
   def update_up(self):
-    version_diff = list(dictdiffer.diff(self.prev_content, self.content))
-    if len(version_diff) == 0:
-      return 
-    #checksum = self._generate_checksum(self.prev_content)
+    up_id = self.conduit.up.get(self.data_id, None)
+    if up_id is None: return
+    self.send_update(up_id, upwards=True)
+    
+  #TODO: make down a list again
+  def update_down(self):
+    down_ids = self.conduit.peers_down(self)
+    #self.conduit.down.get(self.data_id, None)
+    #if down_id is None: return
+    #self.send_update(down_id, upwards=False)
+    for down_id in down_ids:
+      self.send_update(down_id, upwards=False)
+      
+  def get_values_for(self, sync_id):
+    return  (
+      self.content_shadow.setdefault(sync_id, copy.deepcopy(self.initial_value)),
+      self.shadow_backup.setdefault(sync_id, copy.deepcopy(self.initial_value)),
+      self.edit_chain_local.setdefault(sync_id, []),
+      self.version_local.setdefault(sync_id, 0),
+      self.version_other.setdefault(sync_id, 0),
+      self.backup_version_local.setdefault(sync_id, 0),
+      self.backup_version_other.setdefault(sync_id, 0),
+    )
+    
+  def send_update(self, receiver_id, upwards):
+    (content_shadow,
+    shadow_backup,
+    edit_chain_local,
+    version_local,
+    version_other,
+    backup_version_local, 
+    backup_version_other) = self.get_values_for(receiver_id)
+    
+    #1
+    local_diff = list(dictdiffer.diff(content_shadow, self.content))
+    edit_chain_local.append(
+      (version_local, local_diff))
+    
+    #2
     message = {
-      'action': 'update up',
-      'previous_version': self.my_version_up,
-      'delta': version_diff,
-      'data_id': self.data_id,
+      'upwards': upwards,
+      'edits': edit_chain_local,
+      'sender_version': version_local,
+      'receiver_version': version_other
       #'checksum': checksum
     }
-    self.conduit.send_up(self, message)
     
-  def update_down(self):
-    for sync_id in self.conduit.peers_down(self):
-      down_diff = list(dictdiffer.diff(self.prev_content_down.get(sync_id, self.init_func()), self.content))
-      if len(down_diff) == 0:
-        continue
-      version = self.my_version_down.get(sync_id, 0) + 1
-      self.my_version_down[sync_id] = version
-      message = {
-        'action': 'update down',
-        'version': version,
-        'previous_version': self.version_from_below.get(sync_id, 0),
-        'delta': down_diff
-      }
-      print(message)
-      self.conduit.send_to(sync_id, self, message)
+    #3
+    self.content_shadow[receiver_id] = copy.deepcopy(self.content)
+    self.version_local[receiver_id] += 1
     
-  def update_from_above(self, sync_id, message):
-    previous_version = int(message['previous_version'])
+    #print('SEND', self.conduit.index(self), message)
+    self.conduit.send_to(receiver_id, self, message)
+
+  def remote_update(self, source_id, message, upwards):
+    (content_shadow,
+    shadow_backup,
+    edit_chain_local,
+    version_local,
+    version_other,
+    backup_version_local, 
+    backup_version_other) = self.get_values_for(source_id)
     
-    if previous_version != self.my_version_up:
-      pass
-    diff_from_above = message['delta']
-    local_diff = list(dictdiffer.diff(self.prev_content, self.content))
+    edit_chain_other = message['edits']
+    sender_version = message['sender_version']
+    expected_local_version = message['receiver_version']
     
-    if len(local_diff) == 0:
-      dictdiffer.patch(diff_from_above, self.content, in_place=True)
-      self.prev_content = copy.deepcopy(self.content)
-      self.my_version_up = message['version']
+    content_at_start = copy.deepcopy(self.content)
+    
+    if sender_version == version_other and expected_local_version == version_local:
+
+      # Discard local edits that have been
+      # received by the other
+      self.edit_chain_local[source_id] = [item for item in edit_chain_local
+      if item[0] > version_local]
       
-    elif len(diff_from_above) == 0:
-      self.prev_content = copy.deepcopy(self.content)
-      self.my_version_up = message['version']
-      self.update_up()
+      diff_other = list(itertools.chain.from_iterable(
+        [item[1] for item in edit_chain_other]
+      ))
       
+    elif (sender_version == backup_version_other and 
+    expected_local_version == backup_version_local):
+
+      # delete local edit stack
+      edit_chain_local = self.edit_chain_local[source_id] = []
+      
+      # copy the shadow backup into content shadow
+      content_shadow = self.content_shadow[source_id] = copy.deepcopy(shadow_backup)
+      
+      # disregard incoming edits already seen
+      diff_other = list(itertools.chain.from_iterable(
+        [item[1] for item in edit_chain_other if item[0] > backup_version_local]
+      ))
     else:
-      build_up_ok = True
-      try:
-  
-        one_way = dictdiffer.patch(local_diff, self.prev_content)
-        one_way = dictdiffer.patch(diff_from_above, one_way, in_place=True)
-
-        other_way = dictdiffer.patch(diff_from_above, self.prev_content)
-        other_way = dictdiffer.patch(local_diff, other_way, in_place=True)
-          
-      except Exception:
-        build_up_ok = False
-  
-      if build_up_ok and one_way == other_way:
-        self.my_version_up = message['version']
-        self.content = other_way
-        dictdiffer.patch(diff_from_above, self.prev_content)
-      else:
-        self.my_version_up = message['version']
-        dictdiffer.patch(diff_from_above, self.prev_content)
-        self.content = copy.deepcopy(self.prev_content)
-      self.update_down()
+      raise NotImplementedError('Catastrophies not handled yet')
     
-  def update_from_below(self, sync_id, message):
-    previous_version = int(message['previous_version'])
-    local_version = self.my_version_down.get(sync_id, 0)
-    
-    '''
-    if previous_version < 0 or previous_version > my_version_down:
-      message = {
-        'status': 'error',
-        'message': f'Version number out of range: {previous_version}'
-      }
-      self.conduit.send_to(sync_id, self, message)
-      return
-    '''
-    #checksum = message['checksum']
-    #delta_from_down = copy.deepcopy(message['delta'])
-    diff_from_below = message['delta']
-      
-    if previous_version == local_version:
-      
-      '''
-      if not checksum == generate_checksum(self.content):
-        message = { 
-          'status': 'misaligned',
-          'message': 'Content checksums do not match for peer ' + sync_id
-        }
-        self.conduit.send_to(sync_id, self, message)
-        return
-      '''
-      print('dfb', diff_from_below)
-      print('sc', self.content)
-      dictdiffer.patch(diff_from_below, self.content, in_place=True)
-      self.my_version_down[sync_id] += 1
-      self.prev_content_down[sync_id] = copy.deepcopy(self.content)
-      
-      self.update_up()
-      self.update_down()
-      
-      '''
-      message = {
-        'status': 'ok',
-        'version': self.my_version_down[sync_id],
-        'baseline': previous_version
-      }
-      self.conduit.send_to(sync_id, self, message)
-      self.update_up()
-      return 
-      '''
-      
-    elif previous_version < local_version:
-      baseline = self.prev_content_down.get(sync_id, self.init_func())
-
-      '''
-      if not checksum == generate_checksum(baseline):
-        message = { 
-          'status': 'misaligned',
-          'message': 'Baseline checksums do not match in merge for peer ' + sync_id
-        }
-        self.conduit.send_to(sync_id, self, message)
-        return
-      '''
-        
-      local_diff = diff(baseline, self.content)
-        
-      build_up_ok = True
-      try:
+    baseline = copy.deepcopy(content_shadow)
   
-        one_way = dictdiffer.patch(diff_from_below, baseline)
-        one_way = dictdiffer.patch(local_diff, one_way, in_place=True)
-
-        other_way = dictdiffer.patch(local_diff, baseline)
-        other_way = dictdiffer.patch(client_delta, other_way, in_place=True)
-          
-      except Exception:
-        build_up_ok = False
-  
-      if build_up_ok and one_way == other_way:
-        self.my_version_down[sync_id] += 1
-        self.content = one_way
-        self.prev_content_down[sync_id] = other_way
-          
-        '''
-        message = {
-          'status': 'merged',
-          'version': self.my_version_down[sync_id],
-          'baseline': previous_version,
-          'diffs': my_diff
-        }
-        self.conduit.send_to(sync_id, self, message)
-        '''
-        self.update_up()
-        self.update_down()
-        
-      else:
-        self.prev_content_down[sync_id] = copy.deepcopy(self.content)
-        
-        '''
-        message = {
-          'status': 'conflict',
-          'version': self.my_version_down[sync_id],
-          'baseline': previous_version,
-          'diffs': server_diff
-        }
-        self.conduit.send_to(sync_id, self, message)
-        return
-        '''
-        self.update_down()
+    #5, 6
+    dictdiffer.patch(diff_other, content_shadow, in_place=True)
+    self.version_other[source_id] += 1
     
+    #7
+    self.shadow_backup[source_id] = copy.deepcopy(content_shadow)
+    self.backup_version_local[source_id] = version_local
+    self.backup_version_other[source_id] = self.version_other[source_id]
+    
+    #8, 9 with merge
+    diff_local = dictdiffer.diff(baseline, self.content)
+    self.merge(diff_other, diff_local, baseline, upwards)
+    
+    if content_at_start != self.content:
+      self.update_others()
+      if self.change_callback is not None:
+        self.change_callback()
+    elif len(edit_chain_other) > 1 or len(edit_chain_other[0][1]) > 0:
+      self.send_update(source_id, upwards==False)
+      
 
-  '''  
-  def remote_update(self, remote_id, message):
-    if 'put' in message:
+  def merge(self, diff_other, diff_local, baseline, upwards):
+    # Merge is possible if it does not matter
+    # in which order we apply the two deltas
+    build_up_ok = True
+    try:
+      one_way = dictdiffer.patch(diff_other, baseline)
+      one_way = dictdiffer.patch(diff_local, one_way, in_place=True)
 
+      other_way = dictdiffer.patch(diff_local, baseline)
+      other_way = dictdiffer.patch(diff_other, other_way, in_place=True)
+    except Exception:
+      build_up_ok = False
+
+    if build_up_ok and one_way == other_way:
+      self.content = one_way
+    elif not upwards:
+      self.content = dictdiffer.patch(diff_other, baseline)
       
+class MemoryConduit:
+  
+  nodes = {}
+  
+  def __init__(self, conduit):
+    self.node_id = str(uuid.uuid4())
+    self.conduit = conduit
+    self.nodes[self.node_id] = self
+    self.locals = {}
+    self.remotes = {}
+    self.up = {}
+    self.down = {}
+  
+  def register_handler(self, handler):
+    self.locals[handler.data_id] = handler
+    for node in self.nodes.values():
+      if node is not self:
+        node.register_remote_handler(self.node_id, handler.data_id)
+    
+  def register_remote_handler(self, node_id, data_id):
+    remote_handlers = self.remotes.setdefault(data_id, set())
+    #print(remote_handlers)
+    if node_id not in remote_handlers:
+      remote_handlers.add(node_id)
+      if data_id in self.locals:
+        self.nodes[node_id].register_remote_handler(self.node_id, data_id)
+    for id in sorted(remote_handlers):
+      if id > self.node_id:
+        self.up[data_id] = id
+        break
+    else:
+      self.up[data_id] = None
+    for id in sorted(remote_handlers, reverse=True):
+      if id < self.node_id:
+        self.down[data_id] = id
+        break
+    else:
+      self.down[data_id] = None
       
-    if 'status' in message:
+  def index(self, handler):
+    return sorted(self.nodes.keys()).index(self.node_id)
       
-      if message['status'] == 'misaligned':
-        raise Exception('Version misalignment between client and server: ' + str(message['message']))
+  def peers_down(self, handler):
+    down = self.down[handler.data_id]
+    return [] if down is None else [down]
       
-      if message['status'] == 'error':
-        raise Exception('Error: ' + str(message['message']))
-      
-      if message['baseline'] == self.version:
-        if message['status'] == 'ok':
-          #print('ok ', end=' ')
-          self.version = message['version']
-          self.prev_value = current_value
+  def broadcast(self, handler, message):
+    for node in self.nodes.values():
+      if node is not self:
+        node.receive_message(self.node_id, handler.data_id, message)
         
-        elif message['status'] == 'merged':
-          #print('merged ', end=' ')
-          self.prev_value = dictdiffer.patch(message['diffs'], current_value)
-          self.version = message['version']
-        
-        elif message['status'] == 'conflict':
-          #print('conflict ', end=' ')
-          try:
-            self.prev_value = dictdiffer.patch(message['diffs'], self.prev_value)
-            self.version = reply['version']
-          except Exception as e:
-            print('Error patching client to match server')
-            print('* previous client value:')
-            p(self.prev_value)
-            print('* diffs:')
-            p(message['diffs'])
-            raise e
-  '''
+  def receive_message(self, remote_node_id, data_id, message):
+    handler = self.locals.get(data_id, None)
+    if handler:
+      handler.receive_message(remote_node_id, message)
+    
+  def send_up(self, handler, message):
+    to_id = self.up[handler.data_id]
+    if to_id is not None:
+      self.send_to(to_id, handler, message)
+    return to_id is not None
+    
+  def send_to(self, to_node_id, handler, message):
+    self.nodes[to_node_id].receive_message(self.node_id, handler.data_id, message)

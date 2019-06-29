@@ -7,25 +7,23 @@ import time
 
 import faker
 import tinysync
-from tinysync.conduit.memory import MemoryConduit
+#from tinysync.conduit.memory import MemoryConduit
+from tinysync.conduit.pubnub import PubNubConduit
 import dictdiffer
 from decimal import Decimal
 from datetime import datetime
 import console
 
+import sync_conf
+
 data_ids = ('A','B', 'C')
 datas = []
 for data_id in data_ids:
-  data = tinysync.Sync(
-    [],
-    'A',
-    MemoryConduit())
+  data = tinysync.Sync(initial_value=[], conduit=PubNubConduit(
+    sync_conf.pubnub_sub,
+    sync_conf.pubnub_pub))
   datas.append(data)
   
-for data in datas:
-  print('Up', data.conduit.up)
-  print('Dn', data.conduit.down)
-
 fake = faker.Faker()
 fakers = (lambda: {}, fake.pyint, lambda: [])
 
@@ -78,7 +76,7 @@ def remove(data):
 actions = (insert, update, update, update, remove, remove)
 #actions = (insert, update, update, update, update, update, remove)
 
-for i in range(10):
+for i in range(100):
   print('#'+str(i), end=' ')
   input()
   data = fake.random_element(datas)
@@ -87,18 +85,20 @@ for i in range(10):
     func = insert
   else:
     func = fake.random_element(actions)
-  print(' ' + data.data_id + ' ' + func.__name__, end=' ')
+  print(f' {func.__name__}', end=' ')
   func(data.content)
   print(data.content)
   #print '#' + str(i) + ': ' + db.name + ' - ' + str(len(db))
   #start_time = time.time()
-  data.update_local()
+  data.update_others()
   #delta_time = time.time() - start_time
   #print(' ' + str(len(list(db.logic.prev_value.keys()))) + ' items, size ' + str(len(json.dumps(db.logic.prev_value))))
-  print(data.content)
+  #print(data.content)
   #print ' ' + str(delta_time) + ' sec'
   #print status_str
-  if i%20 == 0: console.clear()
+  #if i%20 == 0: console.clear()
+  for i, data in enumerate(datas):
+    print(i, data.content)
   
 '''
 for db in dbs:

@@ -42,6 +42,9 @@ class MemoryConduit:
     else:
       self.down[data_id] = None
       
+  def index(self, handler):
+    return sorted(self.nodes.keys()).index(self.node_id)
+      
   def peers_down(self, handler):
     down = self.down[handler.data_id]
     return [] if down is None else [down]
