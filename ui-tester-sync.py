@@ -1,27 +1,37 @@
 from ui import *
 from anchor import *
 import tinysync
+from tinysync.conduit.pubnub import PubNubConduit
 import random, functools, time
+
+import sync_conf
+
+class CloseableView(ui.View):
+  
+  def will_close(self):
+    for subv in self.subviews[0].subviews:
+      subv.will_close()
 
 class MoveableView(ui.View):
   
   def touch_began(self, touch):
     self.start_time = time.time()
+    self.start_location = ui.convert_point(touch.location, self)
+    self.start_center = self.center
   
   def touch_moved(self, touch):
     if time.time() - self.start_time > .2:
-      delta = touch.location - touch.prev_location
-      self.center += delta
-      x,y = self.center
-      id = int(self.name)
-      self.superview.sync.content[id][0] = x
-      self.superview.sync.content[id][1] = y
-      self.superview.sync.update_others()
+      delta = ui.convert_point(touch.location, self) - self.start_location
+      self.center = self.start_center + delta
       
-  def touch_ended(self,touch):
+  def touch_ended(self, touch):
     if time.time() - self.start_time < .2:
       id = int(self.name)
       del self.superview.sync.content[id]
+      self.superview.sync.update_others()
+    else:
+      id = int(self.name)
+      self.superview.sync.content[id][:2] = self.center
       self.superview.sync.update_others()
 
 class SeaOfBalls(ui.View):
@@ -46,7 +56,19 @@ class SeaOfBalls(ui.View):
     more_b.action = self.add_ball
     self.sync = tinysync.Sync(
       {},
+      conduit=PubNubConduit(
+        sync_conf.pubnub_sub,
+        sync_conf.pubnub_pub
+      ),
       change_callback=self.update_view)
+      
+  def will_close(self):
+    self.sync.stop()
+    
+  def update(self):
+    if time.time() > self.update_others_time:
+      self.sync.update_others()
+      self.update_interval = 0
     
   def add_ball(self, sender):
     ball_id = random.randint(1000000, 100000000)
@@ -80,7 +102,7 @@ class SeaOfBalls(ui.View):
 
 
 
-v = View(background_color=.7)
+v = CloseableView(background_color=.7)
 
 one = SeaOfBalls()
 two = SeaOfBalls()
