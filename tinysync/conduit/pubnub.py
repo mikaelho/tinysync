@@ -1,5 +1,7 @@
 '''
+Conduit implementation using the PubNub messaging service at pubnub.com.
 
+You need to register with PubNub to create an "application" and get publish and subscribe keys to use with this conduit. Small-volume messaging is free.
 '''
 
 import uuid

@@ -1,6 +1,23 @@
+'''
+Abstract base class for conduits that move messages between a group of peer nodes all sharing the same data id.
+
+Implemented:
+  * In-memory reference conduit
+  * PubNub conduit supporting internet-wide sync
+  * iOS multipeer connectivity supporting local peer discovery and syncing
+  abc
+Planned:
+  * Websocket conduit for running your own server
+  * AWS/Azure/Google messaging conduits
+  * Apple messaging?
+'''
+
 import uuid
 
 class Conduit:
+  '''
+  Baseclass for conduits. Not an ABC to avoid confusion if subclasses need multiple inheirtance.
+  '''
   
   def __init__(self):
     self.node_id = str(uuid.uuid4())

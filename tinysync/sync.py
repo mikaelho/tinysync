@@ -6,11 +6,9 @@ https://neil.fraser.name/writing/sync/
 '''
 
 #TODO: Features to implement
-# Disaster branch
-# Timeout replies
 # Specific masters
 
-import copy, itertools, uuid, threading
+import copy, itertools, uuid, json, hashlib, threading
 import dictdiffer
 
 from tinysync.conduit.conduit import MemoryConduit
@@ -24,6 +22,7 @@ class Sync:
   data_id='default', conduit=None, 
   change_callback=None):
     self.initial_value = initial_value
+    self.initial_checksum = Sync.generate_checksum(initial_value)
     self.content = content or copy.deepcopy(self.initial_value)
     self.data_id = data_id
     self.conduit = conduit or MemoryConduit()
@@ -31,39 +30,8 @@ class Sync:
 
     self.conduit.register_handler(self)
     
-    self.content_shadow = {}
-    self.shadow_backup = {}
-    self.edit_chain_local = {}
-    self.version_local = {}
-    self.version_other = {}
-    self.backup_version_local = {}
-    self.backup_version_other = {}
-    
-    '''
-    # Upwards
-    self.prev_content = self.init_func()
-    self.my_version_up = 0
-    # Downwards
-    self.prev_content_down = {}
-    self.my_version_down = {}
-    self.version_from_below = {}
-    #self.client_version = {}
-    '''
-   
-  @staticmethod 
-  def _generate_checksum(data):
-    ''' Returns a hash of the JSON-serializable parameter '''
-    string_data = json.dumps(data, sort_keys=True)
-    return hashlib.md5(string_data.encode()).hexdigest()
-   
-  ''' 
-  def update_local(self):
-    self.update_up()
-    self.update_down()
-  '''
-    
-  def stop(self):
-    self.conduit.shutdown()
+    self.baseline = {}
+    self.edits = {}
     
   def receive_message(self, source_id, message):
     self.remote_update(source_id, message, 
@@ -82,120 +50,88 @@ class Sync:
     
   def update_down(self):
     down_ids = self.conduit.down
-    #self.conduit.down.get(self.data_id, None)
-    #if down_id is None: return
-    #self.send_update(down_id, upwards=False)
     for down_id in down_ids:
       self.send_update(down_id, upwards=False)
       
-  def get_values_for(self, sync_id):
+  def get_values_for(self, node_id):   
     return  (
-      self.content_shadow.setdefault(sync_id, copy.deepcopy(self.initial_value)),
-      self.shadow_backup.setdefault(sync_id, copy.deepcopy(self.initial_value)),
-      self.edit_chain_local.setdefault(sync_id, []),
-      self.version_local.setdefault(sync_id, 0),
-      self.version_other.setdefault(sync_id, 0),
-      self.backup_version_local.setdefault(sync_id, 0),
-      self.backup_version_other.setdefault(sync_id, 0),
+      self.baseline.setdefault(node_id, copy.deepcopy(self.initial_value)),
+      self.edits.setdefault(
+        node_id,
+        [(self.initial_checksum, [])])
     )
     
   def send_update(self, receiver_id, upwards):
-    (content_shadow,
-    shadow_backup,
-    edit_chain_local,
-    version_local,
-    version_other,
-    backup_version_local, 
-    backup_version_other) = self.get_values_for(receiver_id)
+    (baseline,
+    edits
+    ) = self.get_values_for(receiver_id)
+    
+    #print(self.conduit.node_id[:8], '->', receiver_id[:8])
     
     #1
-    local_diff = list(dictdiffer.diff(content_shadow, self.content))
-    edit_chain_local.append(
-      (version_local, local_diff))
+    add_to_baseline = Sync.collapse_edits(edits)
+
+    previous_value = dictdiffer.patch(
+      add_to_baseline, baseline)
+    latest_edit = list(dictdiffer.diff(
+      previous_value, self.content))
+    latest_checksum = Sync.generate_checksum(self.content)
+    edits.append((latest_checksum, latest_edit))
     
     #2
     message = {
       'upwards': upwards,
-      'edits': edit_chain_local,
-      'sender_version': version_local,
-      'receiver_version': version_other
-      #'checksum': checksum
+      'edits': edits,
     }
     
-    #3
-    self.content_shadow[receiver_id] = copy.deepcopy(self.content)
-    self.version_local[receiver_id] += 1
-    
-    #print('SEND', self.conduit.index(self), message)
     self.conduit.send_to(receiver_id, message)
 
   def remote_update(self, source_id, message, upwards):
     with self.lock:
-      (content_shadow,
-      shadow_backup,
-      edit_chain_local,
-      version_local,
-      version_other,
-      backup_version_local, 
-      backup_version_other) = self.get_values_for(source_id)
+      (baseline,
+      edits
+      ) = self.get_values_for(source_id)
       
-      edit_chain_other = message['edits']
-      sender_version = message['sender_version']
-      expected_local_version = message['receiver_version']
+      remote_edits = message['edits']
+      
+      # Find matching edit level
+      remote_index = local_index = -1
+      for j, local_item in reversed(list(
+        enumerate(edits))):
+          for i, remote_item in reversed(list(
+            enumerate(remote_edits))):
+              if remote_item[0] == local_item[0]:
+                remote_index = i
+                local_index = j
+                break
+          if remote_index != -1: break
       
       content_at_start = copy.deepcopy(self.content)
-      
-      if sender_version >= version_other and expected_local_version == version_local:
-  
-        # Discard local edits that have been
-        # received by the other
-        self.edit_chain_local[source_id] = [item for item in edit_chain_local
-        if item[0] > version_local]
+                
+      # Merge remaining edits
+      if local_index > -1:
+        add_to_baseline = Sync.collapse_edits(edits[:local_index+1])
+
+        dictdiffer.patch(
+          add_to_baseline, baseline,
+          in_place=True)
+          
+        baseline_checksum = edits[local_index][0]
+        self.edits[source_id] = list([(baseline_checksum, [])] + [
+          item for i, item in enumerate(edits)
+          if i > local_index
+        ])
         
-        # Discard incoming edits that have
-        # already been processed
+        diff_local = Sync.collapse_edits(edits[local_index+1:])
+
+        diff_other = Sync.collapse_edits(remote_edits[remote_index+1:])
         
-        diff_other = list(itertools.chain.from_iterable(
-          [item[1] for item in edit_chain_other if item[0] >= version_local]
-        ))
-        
-      elif (sender_version >= backup_version_other and 
-      expected_local_version == backup_version_local):
-  
-        # delete local edit stack
-        edit_chain_local = self.edit_chain_local[source_id] = []
-        
-        # copy the shadow backup into content shadow
-        content_shadow = self.content_shadow[source_id] = copy.deepcopy(shadow_backup)
-        
-        # disregard incoming edits already seen
-        diff_other = list(itertools.chain.from_iterable(
-          [item[1] for item in edit_chain_other if item[0] > backup_version_local]
-        ))
-      else:
-        raise NotImplementedError('Catastrophies not handled yet')
-      
-      baseline = copy.deepcopy(content_shadow)
-    
-      #5, 6
-      dictdiffer.patch(diff_other, content_shadow, in_place=True)
-      self.version_other[source_id] = version_other + 1 #+= 1
-      
-      #7
-      self.shadow_backup[source_id] = copy.deepcopy(content_shadow)
-      self.backup_version_local[source_id] = version_local
-      self.backup_version_other[source_id] = self.version_other[source_id]
-      
-      #8, 9 with merge
-      diff_local = dictdiffer.diff(baseline, self.content)
-      self.merge(diff_other, diff_local, baseline, upwards)
-      
-      if content_at_start != self.content:
+        self.content = self.merge(diff_other, diff_local, baseline, upwards)
+
+      if local_index == -1 or content_at_start != self.content:
         self.update_others()
         if self.change_callback is not None:
           self.change_callback()
-      elif len(edit_chain_other) > 1 or len(edit_chain_other[0][1]) > 0:
-        self.send_update(source_id, upwards==False)
   
   def merge(self, diff_other, diff_local, baseline, upwards):
     # Merge is possible if it does not matter
@@ -207,12 +143,34 @@ class Sync:
 
       other_way = dictdiffer.patch(diff_local, baseline)
       other_way = dictdiffer.patch(diff_other, other_way, in_place=True)
-    except Exception:
+    except Exception as e:
       build_up_ok = False
 
     if build_up_ok and one_way == other_way:
-      self.content = one_way
+      return one_way
     elif not upwards:
-      self.content = dictdiffer.patch(diff_other, baseline)
+      return dictdiffer.patch(diff_other, baseline)
+    else:
+      return self.content
       
+  def stop(self):
+    self.conduit.shutdown()    
 
+  @staticmethod 
+  def generate_checksum(data):
+    "Returns a hash of the JSON-serializable parameter"
+    string_data = json.dumps(data, sort_keys=True)
+    return hashlib.md5(string_data.encode()).hexdigest()
+    
+  @staticmethod
+  def collapse_edits(edits):
+    result = []
+    for edit in edits:
+      result += edit[1]
+    return result
+    
+  '''  
+  def update_local(self):
+    self.update_up()
+    self.update_down()
+  '''

@@ -19,9 +19,10 @@ import sync_conf
 data_ids = ('A','B', 'C')
 datas = []
 for data_id in data_ids:
-  data = tinysync.Sync(initial_value=[], conduit=PubNubConduit(
-    sync_conf.pubnub_sub,
-    sync_conf.pubnub_pub))
+  data = tinysync.Sync(initial_value=[], #conduit=PubNubConduit(
+  #  sync_conf.pubnub_sub,
+  #  sync_conf.pubnub_pub)
+  )
   datas.append(data)
   
 fake = faker.Faker()
@@ -98,7 +99,7 @@ for i in range(100):
   #print status_str
   #if i%20 == 0: console.clear()
   for i, data in enumerate(datas):
-    print(i, data.content)
+    print(data.conduit.node_id[:8], data.content)
   
 '''
 for db in dbs:
