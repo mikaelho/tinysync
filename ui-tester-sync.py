@@ -1,12 +1,51 @@
+'''
+Synchronization visualizer that only works on the Pythonista app on iOS devices.
+
+Requires additional modules:
+  * PubNub client libraries
+  * anchor module for layout
+  * multipeer module for device-to-device conduit
+'''
+
 from ui import *
 from anchor import *
 import tinysync
 from tinysync.conduit.pubnub import PubNubConduit
+from tinysync.conduit.ios_multipeer import MultipeerConduit
 import random, functools, time
 
 import sync_conf
 
 class CloseableView(ui.View):
+  
+  def __init__(self, **kwargs):
+    super().__init__(**kwargs)
+    self.visible_touches = []
+    self.update_interval = 1/60
+  
+  def update(self):
+    for t in self.visible_touches:
+      if t[0] is None:
+        t[0] = ui.View(
+          background_color=(0.9,0.9,0.9,0.5),
+          border_color=(0.9,0.9,0.9),
+          border_width=1,
+          width=30,
+          height=30,
+          corner_radius=15,
+          touch_enabled=False
+        )
+        t[0].center = t[1]
+        self.add_subview(t[0])
+      else:
+        t[2] -= 0.1
+        t[0].alpha = t[2]
+        if t[2] == 0.0:
+          self.remove_subview(t[0])
+    self.visible_touches = [
+      t for t in self.visible_touches
+      if t[2] > 0.0
+    ]
   
   def will_close(self):
     for subv in self.subviews[0].subviews:
@@ -20,19 +59,22 @@ class MoveableView(ui.View):
     self.start_center = self.center
   
   def touch_moved(self, touch):
+    s = self.superview.superview.superview
+    s.visible_touches.append([None, ui.convert_point(touch.location, self, s), 1.0])
     if time.time() - self.start_time > .2:
       delta = ui.convert_point(touch.location, self) - self.start_location
       self.center = self.start_center + delta
+      ball_id = int(self.name)
+      self.superview.sync.content[ball_id][:2] = self.center
+      self.superview.sync.update_others()
       
   def touch_ended(self, touch):
+    ball_id = int(self.name)
     if time.time() - self.start_time < .2:
-      id = int(self.name)
-      del self.superview.sync.content[id]
-      self.superview.sync.update_others()
+      del self.superview.sync.content[ball_id]
     else:
-      id = int(self.name)
-      self.superview.sync.content[id][:2] = self.center
-      self.superview.sync.update_others()
+      self.superview.sync.content[ball_id][:2] = self.center
+    self.superview.sync.update_others()
 
 class SeaOfBalls(ui.View):
   
@@ -41,7 +83,6 @@ class SeaOfBalls(ui.View):
     enable(self)
     self.background_color = .3
     self.ball_views = {}
-    #self.ball_data = {}
     more_b = Button(
       title='+',
       name='',
@@ -56,9 +97,10 @@ class SeaOfBalls(ui.View):
     more_b.action = self.add_ball
     self.sync = tinysync.Sync(
       {},
-      conduit=PubNubConduit(
-        sync_conf.pubnub_sub,
-        sync_conf.pubnub_pub
+      conduit=MultipeerConduit(
+      #conduit=PubNubConduit(
+        #sync_conf.pubnub_sub,
+        #sync_conf.pubnub_pub
       ),
       change_callback=self.update_view)
       
@@ -71,6 +113,8 @@ class SeaOfBalls(ui.View):
       self.update_interval = 0
     
   def add_ball(self, sender):
+    s = self.superview.superview
+    s.visible_touches.append([None, ui.convert_point(sender.center, self, s), 1.0])
     ball_id = random.randint(1000000, 100000000)
     ball_x, ball_y = (
       random.randint(10, int(self.width)), 
@@ -86,7 +130,7 @@ class SeaOfBalls(ui.View):
     for view_id in to_remove:
       self.remove_subview(self[str(view_id)])
       del self.ball_views[view_id]
-    for view in self.ball_views.values():
+    for view in list(self.ball_views.values()):
       id = int(view.name)
       (x,y,color) = self.sync.content[id]
       view.center = x, y
@@ -119,9 +163,3 @@ grid.add_subview(four)
 
 v.present()
 
-'''
-moving_balls = tinysync.track(
-  moving_balls, 
-  change_action=
-  functools.partial(update_view, passive))
-'''

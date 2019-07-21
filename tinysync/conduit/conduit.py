@@ -23,6 +23,7 @@ class Conduit:
     self.node_id = str(uuid.uuid4())
     self.up = None
     self.down = []
+    self.handler = None
     
   def register_handler(self, handler):
     self.handler = handler
@@ -32,10 +33,11 @@ class Conduit:
     self.announce_node()
     
   def register_remote_handler(self, node_id):
-    if node_id not in self.node_ids:
-      self.node_ids.add(node_id)
-      self.announce_node()
-      self.set_up_and_down()
+    #with self.handler.lock:
+      if node_id not in self.node_ids:
+        self.node_ids.add(node_id)
+        self.announce_node()
+        self.set_up_and_down()
     
   def receive(self, source_node_id, message):
     self.handler.receive_message(
@@ -43,8 +45,9 @@ class Conduit:
       message)
     
   def remove_remote_handler(self, node_id):
-    self.node_ids.discard(node_id)
-    self.set_up_and_down()
+    #with self.handler.lock:
+      self.node_ids.discard(node_id)
+      self.set_up_and_down()
     
   def set_up_and_down(self):
     for id in sorted(self.node_ids):

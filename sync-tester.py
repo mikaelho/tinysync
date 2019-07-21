@@ -8,7 +8,7 @@ import time
 import faker
 import tinysync
 #from tinysync.conduit.memory import MemoryConduit
-from tinysync.conduit.pubnub import PubNubConduit
+#from tinysync.conduit.pubnub import PubNubConduit
 import dictdiffer
 from decimal import Decimal
 from datetime import datetime
@@ -77,18 +77,18 @@ def remove(data):
 actions = (insert, update, update, update, remove, remove)
 #actions = (insert, update, update, update, update, update, remove)
 
-for i in range(100):
+for i in range(1000):
   print('#'+str(i), end=' ')
-  input()
+  #input()
   data = fake.random_element(datas)
   func = None
   if len(data.content) == 0:
     func = insert
   else:
     func = fake.random_element(actions)
-  print(f' {func.__name__}', end=' ')
+  #print(f' {func.__name__}', end=' ')
   func(data.content)
-  print(data.content)
+  #print(data.content)
   #print '#' + str(i) + ': ' + db.name + ' - ' + str(len(db))
   #start_time = time.time()
   data.update_others()
@@ -98,8 +98,28 @@ for i in range(100):
   #print ' ' + str(delta_time) + ' sec'
   #print status_str
   #if i%20 == 0: console.clear()
-  for i, data in enumerate(datas):
-    print(data.conduit.node_id[:8], data.content)
+
+  #print('-'*20)
+  matching_baseline = None
+  matching_checksum = None
+  for data in datas:
+    nid = data.conduit.node_id
+    #print(nid[:8], data.content)
+    for partner in data.edits:
+      if len(data.edits[partner]) > 1:
+        print('PROBLEM -', nid[:8])
+      if matching_baseline is None:
+        matching_baseline = data.baseline[partner]
+        matching_checksum = data.edits[partner][-1][0]
+      else:
+        if data.baseline[partner] != matching_baseline:
+          print('BASELINE problem -', nid[:8])
+        if data.edits[partner][-1][0] != matching_checksum:
+          print('CHECKSUM problem -', nid[:8])
+  if i % 20 == 1:
+    console.clear()
+        
+        
   
 '''
 for db in dbs:

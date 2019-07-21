@@ -37,7 +37,7 @@ class MultipeerConduit(Conduit):
     self.mc.end_all()
     
     
-class MultipeerHandler(multipeer.MultipeerCommunications):
+class MultipeerHandler(multipeer.MultipeerConnectivity):
   
   def __init__(self, conduit, *args, **kwargs):
     self.conduit = conduit
@@ -55,11 +55,11 @@ class MultipeerHandler(multipeer.MultipeerCommunications):
     node_id = self.node_by_peer[peer_id]
     self.conduit.remove_remote_handler(node_id)
     
-  def send_message(target_node_id, message):
+  def send_message(self, target_node_id, message):
     peer_id = self.peer_by_node[target_node_id]
     self.send(message, to_peer=peer_id)
     
   def receive(self, message, from_peer):
-    source_id = self.node_by_peer[peer_id]
+    source_id = self.node_by_peer[from_peer]
     self.conduit.receive(source_id, message)
     
