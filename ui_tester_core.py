@@ -10,11 +10,7 @@ Requires additional modules:
 from ui import *
 from anchor import *
 import tinysync
-from tinysync.conduit.pubnub import PubNubConduit
-from tinysync.conduit.ios_multipeer import MultipeerConduit
 import random, functools, time
-
-import sync_conf
 
 class CloseableView(ui.View):
   
@@ -78,7 +74,7 @@ class MoveableView(ui.View):
 
 class SeaOfBalls(ui.View):
   
-  def __init__(self, **kwargs):
+  def __init__(self, conduit=None, **kwargs):
     super().__init__(**kwargs)
     enable(self)
     self.background_color = .3
@@ -97,11 +93,7 @@ class SeaOfBalls(ui.View):
     more_b.action = self.add_ball
     self.sync = tinysync.Sync(
       {},
-      conduit=MultipeerConduit(
-      #conduit=PubNubConduit(
-        #sync_conf.pubnub_sub,
-        #sync_conf.pubnub_pub
-      ),
+      conduit=conduit,
       change_callback=self.update_view)
       
   def will_close(self):
@@ -144,22 +136,21 @@ class SeaOfBalls(ui.View):
       view.corner_radius = 20
       view.center = x, y
 
+if __name__ == '__main__':
 
-
-v = CloseableView(background_color=.7)
-
-one = SeaOfBalls()
-two = SeaOfBalls()
-three = SeaOfBalls()
-four = SeaOfBalls()
-
-grid = GridView(pack=GridView.FILL, frame=v.bounds, flex='WH')
-v.add_subview(grid)
-
-grid.add_subview(one)
-grid.add_subview(two)
-grid.add_subview(three)
-grid.add_subview(four)
-
-v.present()
-
+  v = CloseableView(background_color=.7)
+  
+  one = SeaOfBalls()
+  two = SeaOfBalls()
+  three = SeaOfBalls()
+  four = SeaOfBalls()
+  
+  grid = GridView(pack=GridView.FILL, frame=v.bounds, flex='WH')
+  v.add_subview(grid)
+  
+  grid.add_subview(one)
+  grid.add_subview(two)
+  grid.add_subview(three)
+  grid.add_subview(four)
+  
+  v.present()
