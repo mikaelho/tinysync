@@ -1,13 +1,15 @@
 from ui_tester_core import *
-from tinysync.conduit.websocket import *
+from tinysync.conduit.websocket import WebsocketConduit
+from tinysync.conduit.websocket_server import WebsocketServer
+import asyncio
 
-'''
+
 import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.connect(("8.8.8.8", 80))
 host = s.getsockname()[0]
 s.close()
-'''
+print(host)
 
 # This is necessary in Pythonista on iOS
 asyncio.set_event_loop(asyncio.new_event_loop())
@@ -26,5 +28,5 @@ v.present()
 
 asyncio.get_event_loop().run_until_complete(
   conduit.main())
-server.stop()
+server.close()
 
