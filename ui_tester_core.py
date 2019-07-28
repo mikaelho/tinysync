@@ -9,7 +9,10 @@ Requires additional modules:
 
 from ui import *
 from anchor import *
+
 import tinysync
+#from tinysync.conduit.conduit import MemoryConduit
+
 import random, functools, time
 
 class CloseableView(ui.View):
@@ -61,16 +64,16 @@ class MoveableView(ui.View):
       delta = ui.convert_point(touch.location, self) - self.start_location
       self.center = self.start_center + delta
       ball_id = int(self.name)
-      self.superview.sync.content[ball_id][:2] = self.center
-      self.superview.sync.update_others()
+      self.superview.balls[ball_id].center = tuple(self.center)
+      #self.superview.sync.update_others()
       
   def touch_ended(self, touch):
     ball_id = int(self.name)
     if time.time() - self.start_time < .2:
-      del self.superview.sync.content[ball_id]
+      del self.superview.balls[ball_id]
     else:
-      self.superview.sync.content[ball_id][:2] = self.center
-    self.superview.sync.update_others()
+      self.superview.balls[ball_id].center = tuple(self.center)
+    #self.superview.sync.update_others()
 
 class SeaOfBalls(ui.View):
   
@@ -91,18 +94,14 @@ class SeaOfBalls(ui.View):
     more_b.at.height == 40
     more_b.corner_radius = 20
     more_b.action = self.add_ball
-    self.sync = tinysync.Sync(
-      {},
-      conduit=conduit,
-      change_callback=self.update_view)
+    
+    self.balls = tinysync.track({}, 
+      name='balls',
+      persist=False, sync=conduit,
+      change_action=self.update_view)
       
   def will_close(self):
-    self.sync.stop()
-    
-  def update(self):
-    if time.time() > self.update_others_time:
-      self.sync.update_others()
-      self.update_interval = 0
+    tinysync.handler(self.balls).sync.stop()
     
   def add_ball(self, sender):
     s = self.superview.superview
@@ -112,11 +111,11 @@ class SeaOfBalls(ui.View):
       random.randint(10, int(self.width)), 
       random.randint(10, int(self.height)))
     ball_color = random.choice(('red', 'blue', 'green', 'yellow', 'orange', 'cyan', 'violet', 'brown'))
-    self.sync.content[ball_id] = [ball_x, ball_y, ball_color]
-    self.sync.update_others()
+    
+    self.balls[ball_id] = { 'center': (ball_x, ball_y), 'color': ball_color }
 
   def update_view(self):
-    needed = set(self.sync.content.keys())
+    needed = set(self.balls.keys())
     visible = set((int(id) for id in self.ball_views.keys()))
     to_remove = visible - needed
     for view_id in to_remove:
@@ -124,17 +123,16 @@ class SeaOfBalls(ui.View):
       del self.ball_views[view_id]
     for view in list(self.ball_views.values()):
       id = int(view.name)
-      (x,y,color) = self.sync.content[id]
-      view.center = x, y
+      view.center = self.balls[id].center
       needed.remove(id)
     for id in needed:
-      (x,y,color) = self.sync.content[id]
-      view = MoveableView(name=str(id), background_color=color)
+      ball = self.balls[id]
+      view = MoveableView(name=str(id), background_color=ball.color)
       self.add_subview(view)
       self.ball_views[id] = view
       view.frame = (0,0,40,40)
       view.corner_radius = 20
-      view.center = x, y
+      view.center = ball.center
 
 if __name__ == '__main__':
 

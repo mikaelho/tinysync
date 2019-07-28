@@ -11,6 +11,7 @@ https://neil.fraser.name/writing/sync/
 import copy, itertools, uuid, json, hashlib, threading
 import dictdiffer
 
+import tinysync
 from tinysync.conduit.conduit import MemoryConduit
 
 debugging = False
@@ -25,7 +26,7 @@ class Sync:
   change_callback=None):
     self.initial_value = initial_value
     self.initial_checksum = Sync.generate_checksum(initial_value)
-    self.content = content or copy.deepcopy(self.initial_value)
+    self.content = content if content is not None else copy.deepcopy(self.initial_value)
     self.data_id = data_id
     self.conduit = conduit or MemoryConduit()
     self.change_callback = change_callback
@@ -160,7 +161,19 @@ class Sync:
         
         local_change = self.merge(diff_other, diff_local, baseline, upwards)
         #print('local change', local_change)
+        
+        tinysync_handler = (
+          tinysync.handler(self.content) if 
+          tinysync.istracked(self.content) 
+          else None)
+        if tinysync_handler:
+          value_was = tinysync_handler.sync_on
+          tinysync_handler.sync_on = False
+        
         dictdiffer.patch(local_change, self.content, in_place=True)
+        
+        if tinysync_handler:
+          tinysync_handler.sync_on = value_was
         
         #print('content', self.content)
 
@@ -197,14 +210,14 @@ class Sync:
         #return self.content
         return []
       
-      
   def stop(self):
     self.conduit.shutdown()    
 
   @staticmethod 
   def generate_checksum(data):
     "Returns a hash of the JSON-serializable parameter"
-    string_data = json.dumps(data, sort_keys=True)
+    copy_data = copy.deepcopy(data)
+    string_data = json.dumps(copy_data, sort_keys=True)
     return hashlib.md5(string_data.encode()).hexdigest()
     
   @staticmethod

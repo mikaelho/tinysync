@@ -36,6 +36,22 @@ class HandlerProxy():
     self.handler.persist = value
     
   @property
+  def sync(self):
+    return self.handler.sync
+        
+  @sync.setter
+  def sync(self, value):
+    self.handler.sync = value
+    
+  @property
+  def sync_on(self):
+    return self.handler.sync_on
+        
+  @sync_on.setter
+  def sync_on(self, value):
+    self.handler.sync_on = value
+    
+  @property
   def change_callback(self):
     return self.handler.change_callback
         
@@ -64,15 +80,25 @@ class Handler():
   persistence_default = SafeYamlFile
   dot_access_default = True
   
-  def __init__(self, subject, name, persist, change_action, change_callback, conflict_callback, path_prefix, dot_access):
+  def __init__(self, 
+    subject, 
+    name, 
+    persist, 
+    sync_conduit, 
+    change_action,
+    change_callback, 
+    conflict_callback, 
+    path_prefix, 
+    dot_access):
         
     self.lock = threading.RLock()
 
     self.name = name
+    self.persist = persist
+    
     self.change_callback = change_callback
     self.change_action = change_action
     self.conflict_callback = conflict_callback
-    self.persist = persist
     self.path_prefix = path_prefix
     self.change_paths = ChangePathItem()
     self.save_changes = True
@@ -84,6 +110,13 @@ class Handler():
       self.trackable_types[MutableMapping] = DictWrapper_Dot
 
     self.root = self.start_to_track(subject, path_prefix)
+    
+    if sync_conduit is not False:
+      self.sync = Sync({}, content=self.root, data_id=name, conduit=sync_conduit)
+      self.sync_on = True
+    else:
+      self.sync = None
+      self.sync_on = False
  
   def on_change(self, target, func_name, *args, **kwargs):
     
@@ -91,8 +124,10 @@ class Handler():
       name=self.name,
       root=self.root,
       path=target._tracker.path, 
-      target=target,func_name=func_name, 
-      args=args, kwargs=kwargs
+      target=target,
+      func_name=func_name, 
+      args=args,
+      kwargs=kwargs
     )
       
     self.make_updates(target)
@@ -105,6 +140,9 @@ class Handler():
     
     if self.change_callback:
       self.change_callback(change_data)
+    
+    if self.sync_on:
+      self.sync.update_others()
     
     if self.persist is not None:
       self.persist.change_advisory(change_data)
@@ -250,7 +288,7 @@ class NoNameNoPersistence():
 
 #def track(target, name='default', path=None, tracker=None, persist=None, callback=None):
   
-def track(target, name=NoNameNoPersistence(), persist=None, change_action=None, change_callback=None, conflict_callback=None, path_prefix=None, dot_access=None):
+def track(target, name=NoNameNoPersistence(), persist=None, sync=False, change_action=None, change_callback=None, conflict_callback=None, path_prefix=None, dot_access=None):
   """ Main function to start tracking changes to structures. 
   
   Give it a structure consisting of dicts, lists, sets and contained objects, and
@@ -259,13 +297,15 @@ def track(target, name=NoNameNoPersistence(), persist=None, change_action=None, 
   Parameters:
   
   * `target`: The data structure to track.
-  * `name`: Name is used for persistence, e.g. as the file name. It is also included in change notifications.
+  * `name`: Name is used for persistence or synchronization, e.g. as the file name. It is also included in change notifications.
   * `persist`: Optional - Overrides class default persistence setting as defined by the `Tracker` class `default_persistence` attribute.
+  * `sync`: Optional - Conduit used to sync this data structure with other devices.
   * `change_callback`: Optional - Function that is called every time the tracked structure is changed. Function is called 
   * `conflict_callback`: Optional - Function called to resolve conflicts between the latest changes and the persisted values.
   * `path_prefix`: Optional - Path prefix as a list of segments.
   * `dot_access`: Optional - True or False to indicate whether you want this tracked structures dict values to be accessible with the attribute-like dot notation. Default is True unless changed globally by calling the `dot_off` function.
   """
+  
   tracked = None
   persistence = None
   path_prefix = path_prefix if path_prefix is not None else []
@@ -289,7 +329,7 @@ def track(target, name=NoNameNoPersistence(), persist=None, change_action=None, 
       target = loaded_target
       initial = False
   
-  handler = Handler(target, name, persistence, change_action, change_callback, conflict_callback, path_prefix, dot_access)
+  handler = Handler(target, name, persistence, sync, change_action, change_callback, conflict_callback, path_prefix, dot_access)
   
   if persistence is not None:
     persistence.dump(handler.root, initial=initial)
