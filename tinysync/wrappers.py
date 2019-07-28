@@ -55,11 +55,15 @@ class TrackerWrapper(ObjectWrapper):
     if handler.lock:
       handler.lock.acquire()
     handler.save_changes = False
+    handler.sync_on = False
     
   def __exit__(self, *exc):
     handler = self._tracker.handler
     handler.save()
     handler.save_changes = True
+    handler.sync_on = True
+    if handler.sync is not None:
+      handler.sync.update_others()
     if handler.lock:
       handler.lock.release()
   
@@ -70,7 +74,7 @@ class TrackerWrapper(ObjectWrapper):
 class DictWrapper(TrackerWrapper):
   pass   
        
-             
+              
 class DictWrapper_Dot(DictWrapper):
   """ Version of dict wrapper where tracked dicts 
   support attribute-like access to items, if the 

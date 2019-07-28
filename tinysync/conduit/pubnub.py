@@ -19,11 +19,11 @@ from pubnub.pubnub import PubNub
 
 class PubNubConduit(Conduit, SubscribeCallback):
   
-  def __init__(self, sub_key, pub_key):
+  def __init__(self, conf):
     super().__init__()
     pnconfig = PNConfiguration()
-    pnconfig.subscribe_key = sub_key
-    pnconfig.publish_key = pub_key
+    pnconfig.subscribe_key = conf[0]
+    pnconfig.publish_key = conf[1]
     pnconfig.ssl = True
  
     self.pubnub = PubNub(pnconfig)

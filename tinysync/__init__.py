@@ -141,7 +141,7 @@ class Handler():
     if self.change_callback:
       self.change_callback(change_data)
     
-    if self.sync_on:
+    if self.sync_on and self.sync is not None:
       self.sync.update_others()
     
     if self.persist is not None:
