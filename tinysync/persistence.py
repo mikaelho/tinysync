@@ -1,3 +1,5 @@
+
+
 import json
 import importlib
 from collections.abc import MutableMapping
@@ -6,7 +8,7 @@ from copy import deepcopy
 
 import dictdiffer
 
-from util import *
+from tinysync.util import *
 
 @contextmanager
 def do_not_track(obj):
@@ -59,7 +61,7 @@ class AbstractFile(Persistence):
         self.testing.seek(0)
         return self.loader(self.testing)
       else:
-        with open(self.filename) as fp:
+        with open(self.filename, encoding='utf-8') as fp:
           return self.loader(fp)
     except (EOFError, FileNotFoundError):
       return None
@@ -75,7 +77,7 @@ class AbstractFile(Persistence):
       self.testing = io.StringIO()
       self.dumper(to_save, self.testing)
     else:
-      with open(self.filename, 'w') as fp:
+      with open(self.filename, 'w', encoding='utf-8') as fp:
         self.dumper(to_save, fp)
 
 
@@ -98,7 +100,11 @@ class SafeYamlFile(AbstractFile):
           data = data.__subject__
         return super().represent_data(data)
     
-    yaml.dump(to_save, fp, default_flow_style=False, Dumper=TrackerSafeDumper)
+    yaml.dump(
+      to_save, fp,
+      default_flow_style=False,
+      allow_unicode=True,
+      Dumper=TrackerSafeDumper)
 
 
 class LazyPersistence(Persistence):

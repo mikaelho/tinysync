@@ -1,11 +1,11 @@
 #coding: utf-8
 
-from proxies import ObjectWrapper
+from tinysync.proxies import ObjectWrapper
 from collections.abc import MutableSequence, MutableMapping, MutableSet
 from types import SimpleNamespace
 import functools
 
-from util import *
+from tinysync.util import *
   
 def synchronized(func):
   """ Decorator for making wrapper functions, i.e.

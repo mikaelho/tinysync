@@ -86,35 +86,27 @@ for i in range(1000):
     func = insert
   else:
     func = fake.random_element(actions)
-  #print(f' {func.__name__}', end=' ')
-  func(data.content)
-  #print(data.content)
-  #print '#' + str(i) + ': ' + db.name + ' - ' + str(len(db))
-  #start_time = time.time()
-  data.update_others()
-  #delta_time = time.time() - start_time
-  #print(' ' + str(len(list(db.logic.prev_value.keys()))) + ' items, size ' + str(len(json.dumps(db.logic.prev_value))))
-  #print(data.content)
-  #print ' ' + str(delta_time) + ' sec'
-  #print status_str
-  #if i%20 == 0: console.clear()
 
-  #print('-'*20)
+  func(data.content)
+
+  data.update_others()
+
   matching_baseline = None
   matching_checksum = None
   for data in datas:
     nid = data.conduit.node_id
     #print(nid[:8], data.content)
-    for partner in data.edits:
-      if len(data.edits[partner]) > 1:
+    for partner in data.state:
+      state = data.state[partner]
+      if len(state.edits) > 1:
         print('PROBLEM -', nid[:8])
       if matching_baseline is None:
-        matching_baseline = data.baseline[partner]
-        matching_checksum = data.edits[partner][-1][0]
+        matching_baseline = state.baseline
+        matching_checksum = state.edits[-1][0]
       else:
-        if data.baseline[partner] != matching_baseline:
+        if state.baseline != matching_baseline:
           print('BASELINE problem -', nid[:8])
-        if data.edits[partner][-1][0] != matching_checksum:
+        if state.edits[-1][0] != matching_checksum:
           print('CHECKSUM problem -', nid[:8])
   if i % 20 == 1:
     console.clear()

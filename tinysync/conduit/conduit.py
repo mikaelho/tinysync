@@ -19,8 +19,8 @@ class Conduit:
   Baseclass for conduits. Not an ABC to avoid confusion if subclasses need multiple inheirtance.
   '''
   
-  def __init__(self):
-    self.node_id = str(uuid.uuid4())
+  def __init__(self, node_id=None):
+    self.node_id = node_id or str(uuid.uuid4())
     self.up = None
     self.down = []
     self.handler = None
@@ -123,42 +123,4 @@ class MemoryConduit(Conduit):
       
   def send_to(self, target_node_id, message):
     self.nodes[target_node_id].receive(self.node_id, message)
-    
-  '''
-  def deregister_handler(self, handler):
-    if handler.data_id not in self.locals:
-      return
-    del self.locals[handler.data_id]
-    self.remove_node(handler.data_id)
-    
-  def remove_node(self, data_id):
-    pass
-    
 
-      
-  def index(self, handler):
-    return sorted(self.nodes.keys()).index(self.node_id)
-      
-  def peers_down(self, handler):
-    down = self.down[handler.data_id]
-    return [] if down is None else [down]
-      
-  def broadcast(self, handler, message):
-    for node in self.nodes.values():
-      if node is not self:
-        node.receive_message(self.node_id, handler.data_id, message)
-        
-  def receive_message(self, remote_node_id, data_id, message):
-    handler = self.locals.get(data_id, None)
-    if handler:
-      handler.receive_message(remote_node_id, message)
-    
-  def send_up(self, handler, message):
-    to_id = self.up[handler.data_id]
-    if to_id is not None:
-      self.send_to(to_id, handler, message)
-    return to_id is not None
-    
-  def send_to(self, to_node_id, handler, message):
-    self.nodes[to_node_id].receive_message(self.node_id, handler.data_id, message)
-  '''

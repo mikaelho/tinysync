@@ -112,7 +112,12 @@ class Handler():
     self.root = self.start_to_track(subject, path_prefix)
     
     if sync_conduit is not False:
-      self.sync = Sync({}, content=self.root, data_id=name, conduit=sync_conduit)
+      self.sync = Sync(
+        {},
+        content=self.root,
+        data_id=name,
+        conduit=sync_conduit,
+        lock=self.lock)
       self.sync_on = True
     else:
       self.sync = None
@@ -331,8 +336,8 @@ def track(target, name=NoNameNoPersistence(), persist=None, sync=False, change_a
   
   handler = Handler(target, name, persistence, sync, change_action, change_callback, conflict_callback, path_prefix, dot_access)
   
-  if persistence is not None:
-    persistence.dump(handler.root, initial=initial)
+  if persistence is not None and initial:
+    persistence.dump(handler.root)
     
   return handler.root
 

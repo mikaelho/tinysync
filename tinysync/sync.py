@@ -18,23 +18,30 @@ debugging = False
 
 class Sync:
   
-  lock = threading.RLock()
+  #lock = threading.RLock()
   
   def __init__(self,
-  initial_value, content=None, 
-  data_id='default', conduit=None, 
-  change_callback=None):
+    initial_value,
+    content=None, 
+    data_id='default',
+    persist=False,
+    conduit=None, 
+    change_callback=None,
+    lock=None):
+      
     self.initial_value = initial_value
     self.initial_checksum = Sync.generate_checksum(initial_value)
     self.content = content if content is not None else copy.deepcopy(self.initial_value)
     self.data_id = data_id
     self.conduit = conduit or MemoryConduit()
     self.change_callback = change_callback
+    self.lock = lock or threading.RLock()
 
     self.conduit.register_handler(self)
     
-    self.baseline = {}
-    self.edits = {}
+    self.state = tinysync.track({}, name=data_id+'-sync', persist=persist)
+    #self.baseline = {}
+    #self.edits = {}
     
   def receive_message(self, source_id, message):
     self.remote_update(source_id, message, 
@@ -56,7 +63,8 @@ class Sync:
     for down_id in down_ids:
       self.send_update(down_id, upwards=False)
       
-  def get_values_for(self, node_id):   
+  def get_state_for(self, node_id):   
+    '''
     return  (
       self.baseline.setdefault(node_id, copy.deepcopy(self.initial_value)),
       self.edits.setdefault(
@@ -64,45 +72,46 @@ class Sync:
         [(self.initial_checksum, [])])
         #[('0-'+str(self.initial_checksum), [])])
     )
+    '''
+    self.state.setdefault(
+      node_id,
+      {
+        'baseline': copy.deepcopy(self.initial_value),
+        'edits': [(self.initial_checksum, [])]
+      })
+    return self.state[node_id]
     
   def send_update(self, receiver_id, upwards):
     #global debugging
     
     #with self.lock:
-    
-      (baseline,
-      edits
-      ) = self.get_values_for(receiver_id)
+      state = self.get_state_for(receiver_id) 
+      #(baseline,
+      #edits
+      #) = self.get_values_for(receiver_id)
       
       if debugging:
         print(self.conduit.node_id[:8], '->', receiver_id[:8])
-      
-      '''
-      ctrl = input()
-      if ctrl == 'd':
-        debugging = True
-      '''
-      
       #1
       #previous_version = int(edits[-1][0].split('-')[0])
-      add_to_baseline = Sync.collapse_edits(edits)
+      add_to_baseline = Sync.collapse_edits(state.edits)
   
       previous_value = dictdiffer.patch(
-        add_to_baseline, baseline)
+        add_to_baseline, state.baseline)
       latest_edit = list(dictdiffer.diff(
         previous_value, self.content))
       latest_checksum = Sync.generate_checksum(self.content)
       #edits.append((str(previous_version+1)+'-'+str(latest_checksum), latest_edit))
       if len(latest_edit) > 0:
-        edits.append((latest_checksum, latest_edit))
+        state.edits.append((latest_checksum, latest_edit))
       
       if debugging:
-        print('edits out', edits)
+        print('edits out', state.edits)
       
       #2
       message = {
         'upwards': upwards,
-        'edits': edits,
+        'edits': copy.deepcopy(state.edits),
       }
     
       self.conduit.send_to(receiver_id, message)
@@ -111,16 +120,19 @@ class Sync:
     global debugging
     
     with self.lock:
+      '''
       (baseline,
       edits
       ) = self.get_values_for(source_id)
+      '''
+      state = self.get_state_for(source_id)
       
       remote_edits = copy.deepcopy(message['edits'])
       
       # Find matching edit level
       remote_index = local_index = -1
       for j, local_item in reversed(list(
-        enumerate(edits))):
+        enumerate(state.edits))):
           for i, remote_item in reversed(list(
             enumerate(remote_edits))):
               if remote_item[0] == local_item[0]:
@@ -130,37 +142,32 @@ class Sync:
           if remote_index != -1: break
           
       if remote_index == -1:
-        print('PROBLEM', edits, remote_edits)
+        print('PROBLEM', state.edits, remote_edits)
         
       content_at_start = copy.deepcopy(self.content)
       
       if debugging:          
-        print('local edits', edits)
-        print('baseline before', baseline)
+        print('local edits', state.edits)
+        print('baseline before', state.baseline)
                 
       if local_index > -1:
-        add_to_baseline = Sync.collapse_edits(edits[:local_index+1])
-        #print('add to baseline', add_to_baseline)
+        add_to_baseline = Sync.collapse_edits(state.edits[:local_index+1])
         
         dictdiffer.patch(
-          add_to_baseline, baseline,
+          add_to_baseline, state.baseline,
           in_place=True)
           
-        #print('baseline after', self.baseline[source_id])
-          
-        baseline_checksum = edits[local_index][0]
-        self.edits[source_id] = list([(baseline_checksum, [])] + [
-          item for i, item in enumerate(edits)
+        baseline_checksum = state.edits[local_index][0]
+        state.edits = list([(baseline_checksum, [])] + [
+          item for i, item in enumerate(state.edits)
           if i > local_index
         ])
-        #print('edits', self.edits[source_id])
         
-        diff_local = Sync.collapse_edits(edits[local_index+1:])
+        diff_local = Sync.collapse_edits(state.edits[local_index+1:])
 
         diff_other = Sync.collapse_edits(remote_edits[remote_index+1:])
         
-        local_change = self.merge(diff_other, diff_local, baseline, upwards)
-        #print('local change', local_change)
+        local_change = self.merge(diff_other, diff_local, state.baseline, upwards)
         
         tinysync_handler = (
           tinysync.handler(self.content) if 
@@ -181,7 +188,7 @@ class Sync:
         self.update_others()
         if self.change_callback is not None:
           self.change_callback()
-      elif len(self.edits[source_id]) > 1 or len(remote_edits) > 1:
+      elif len(state.edits) > 1 or len(remote_edits) > 1:
         self.send_update(source_id, upwards==False)
   
   def merge(self, diff_other, diff_local, baseline, upwards):
