@@ -47,22 +47,14 @@ class AbstractFile(Persistence):
   
   file_format = 'abstract'
   
-  def __init__(self, filename, testing=False):
+  def __init__(self, filename):
     self.format = format if format else self.default_format
     self.filename = filename + '.' + self.file_format
-    self.testing = testing
-    if testing:
-      #import tempfile
-      self.testing = io.StringIO()#tempfile.TemporaryFile()
     
   def load(self):
     try:
-      if self.testing:
-        self.testing.seek(0)
-        return self.loader(self.testing)
-      else:
-        with open(self.filename, encoding='utf-8') as fp:
-          return self.loader(fp)
+      with open(self.filename, encoding='utf-8') as fp:
+        return self.loader(fp)
     except (EOFError, FileNotFoundError):
       return None
       
@@ -73,12 +65,8 @@ class AbstractFile(Persistence):
     return self.load()
     
   def dump(self, to_save, handler=None, conflict_callback=None, initial=False):
-    if self.testing:
-      self.testing = io.StringIO()
-      self.dumper(to_save, self.testing)
-    else:
-      with open(self.filename, 'w', encoding='utf-8') as fp:
-        self.dumper(to_save, fp)
+    with open(self.filename, 'w', encoding='utf-8') as fp:
+      self.dumper(to_save, fp)
 
 
 class SafeYamlFile(AbstractFile):
