@@ -3,7 +3,9 @@
 from tinysync.proxies import ObjectWrapper
 from collections.abc import MutableSequence, MutableMapping, MutableSet
 from types import SimpleNamespace
-import functools
+import functools, copy
+
+import dictdiffer
 
 from tinysync.util import *
 
@@ -165,9 +167,16 @@ mutating_methods = {
 for wrapper_type in mutating_methods:
     for func_name in mutating_methods[wrapper_type]:
         def func(self, *args, tracker_function_name=func_name, **kwargs):
-            with self._tracker.handler.lock:
+            handler = self._tracker.handler
+            if handler.history is not None:
+                version_before = copy.deepcopy(self)
+            with handler.lock:
                 return_value = getattr(self.__subject__, tracker_function_name)(*args, **kwargs)
-            self._tracker.handler.on_change(self, [])
+                if handler.history is not None:
+                    change_diff = list(dictdiffer.diff(version_before, self, node=self._tracker.path))
+                else:
+                    change_diff = []
+            handler.on_change(self, change_diff)
             return return_value
         setattr(wrapper_type, func_name, func)
         getattr(wrapper_type, func_name).__name__ = func_name
