@@ -67,9 +67,6 @@ class MoveableView(ui.View):
             delta = ui.convert_point(touch.location, self) - self.start_location
             self.center = self.start_center + delta
             ball_id = int(self.name)
-            
-            with open('logging.txt', 'a') as fp:
-                fp.write('update loc\n')
             self.superview.balls[ball_id].center = tuple(self.center)
             #self.superview.sync.update_others()
 
@@ -122,7 +119,7 @@ class SeaOfBalls(ui.View):
         ball_x, ball_y = (
           random.randint(10, int(self.width)),
           random.randint(10, int(self.height)))
-        ball_color = random.choice(('red', 'blue', 'green', 'yellow', 'orange', 'cyan', 'violet', 'brown'))
+        ball_color = random.choice(('#73C7DF','#CBAB84','#242C35')) #,'red', 'blue', 'green', 'yellow', 'orange', 'cyan', 'violet', 'brown'))
 
         self.to_file('add ball')
 
